@@ -15,7 +15,9 @@ hex=$(conda list -n base --json | python3 -c 'import json,sys; d=json.load(sys.s
 [ "$hex" -gt 0 ] || { echo "conda: the base environment lists no packages" >&2; exit 1; }
 
 # `conda package` needs an installed prefix and writes to the package cache.
-conda package -n base --output-folder /tmp/conda-out 2>&1 | tail -3 || true
+# NOTE: `conda package` has NO --output-folder flag ("unrecognized arguments");
+# it always writes into <base>/pkgs, which the fallback below already looks at.
+conda package -n base 2>&1 | tail -3 || true
 
 pkg=$(find /tmp/conda-out -name '*.tar.bz2' -o -name '*.conda' 2>/dev/null | head -1)
 [ -n "$pkg" ] || pkg=$(find "$(conda info --base 2>/dev/null)/pkgs" -maxdepth 1   -name '*.tar.bz2' -o -maxdepth 1 -name '*.conda' 2>/dev/null | head -1)

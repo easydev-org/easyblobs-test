@@ -19,9 +19,9 @@ grep -q 'hello easyblobs' "$out" || { echo "bazel: wrong target output" >&2; exi
 
 # PUBLISH the built artifact to the mount (the BCR layout: modules/<name>/...),
 # then read it back. Resolution through the registry was already exercised above.
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
 name=rules_hello
-mkdir -p "$TMP/bcr/modules/$name/1.0.0"
-cp "$out" "$TMP/bcr/modules/$name/1.0.0/hello.txt"
 code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
   "$EASYBLOBS_BASE/modules/$name/1.0.0/hello.txt" --data-binary "@$out")
 case "$code" in 200|201) ;; *) echo "bazel: upload -> $code" >&2; exit 1 ;; esac
