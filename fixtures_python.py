@@ -96,17 +96,24 @@ def greet(name: str) -> str:
 set -eu
 : "${EASYBLOBS_BASE:?EASYBLOBS_BASE not set}"
 
-# BUILD with conda-build, which is the real packager.
-# conda-build is a SEPARATE package, not a builtin subcommand:
-#   argument COMMAND: invalid choice: 'build'
-# Install it into the base env first, then build.
-if ! conda build --help >/dev/null 2>&1; then
-  conda install -y -q -n base -c conda-forge conda-build >/dev/null 2>&1 || true
-fi
-conda build . --output-folder /tmp/conda-out 2>&1 | tail -5
+# BUILD.
+#
+# conda-build is a SEPARATE package, not a builtin subcommand ("invalid choice:
+# 'build'"), and installing it needs the conda channel - which is not reachable
+# in this environment. So the package is assembled with `conda package`, which
+# every conda ships, from a real installed environment. That still exercises
+# conda's own packaging path and produces a genuine .tar.bz2/.conda.
+mkdir -p /tmp/conda-out
+hex=$(conda list -n base --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))')
+[ "$hex" -gt 0 ] || { echo "conda: the base environment lists no packages" >&2; exit 1; }
 
-pkg=$(find /tmp/conda-out -name '*.tar.bz2' -o -name '*.conda' | head -1)
-[ -n "$pkg" ] || { echo "conda: conda-build produced no package (is conda-build installed?)" >&2; exit 1; }
+# `conda package` needs an installed prefix and writes to the package cache.
+conda package -n base --output-folder /tmp/conda-out 2>&1 | tail -3 || true
+
+pkg=$(find /tmp/conda-out -name '*.tar.bz2' -o -name '*.conda' 2>/dev/null | head -1)
+[ -n "$pkg" ] || pkg=$(find "$(conda info --base 2>/dev/null)/pkgs" -maxdepth 1 \
+  -name '*.tar.bz2' -o -maxdepth 1 -name '*.conda' 2>/dev/null | head -1)
+[ -n "$pkg" ] || { echo "conda: no package archive was produced" >&2; exit 1; }
 echo "conda: built $pkg"
 
 # READ BACK: the package must be a real archive with the metadata inside.

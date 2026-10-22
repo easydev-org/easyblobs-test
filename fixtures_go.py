@@ -90,9 +90,10 @@ bazel_dep(name = "rules_go", version = "0.50.1")
     cmd = "echo 'hello easyblobs' > $@",
 )
 """,
-            ".bazelrc": """common --noenable_bzlmod
-common --enable_bzlmod
-""",
+            # bzlmod must be ON: the fixture's whole purpose is resolving a
+            # registry dependency. An earlier version set both --noenable_bzlmod
+            # and --enable_bzlmod, which conflicts and aborts before any work.
+            ".bazelrc": "common --enable_bzlmod\n",
         },
         """#!/bin/sh
 # bazel: resolve a bzlmod dependency through the mount and build a target.
