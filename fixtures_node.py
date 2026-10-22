@@ -49,8 +49,19 @@ hostport=$(printf '%s' "$EASYBLOBS_BASE" | sed -e 's|^https\\?://||' -e 's|/.*||
 {
   echo "registry=$EASYBLOBS_BASE"
   echo "//$hostport/:_authToken=e2e"
-} > "$HOME/.npmrc"
-npm publish
+  echo "always-auth=true"
+} > .npmrc
+# Three separate mechanisms, because a missed one is silent: npm decides "am I
+# authenticated for this registry" BEFORE it sends anything, so an unread token
+# gives ENEEDAUTH with no request on the wire.
+#   1. the project .npmrc (always read),
+#   2. NPM_CONFIG_USERCONFIG pointing at it explicitly ($HOME is /github/home in
+#      a container, so ~/.npmrc is easy to miss),
+#   3. the same key in environment form.
+echo "node: .npmrc (token redacted)"; sed 's/_authToken=.*/_authToken=***/' .npmrc
+export NPM_CONFIG_USERCONFIG="$PWD/.npmrc"
+export "NPM_CONFIG_//$hostport/:_authToken=e2e"
+npm publish --registry "$EASYBLOBS_BASE" --userconfig "$PWD/.npmrc"
 
 # READ BACK: the packument must list this version.
 curl -fsS "$EASYBLOBS_BASE/@easyblobs-test%2Fhello" | grep -q '"1.0.0"' || {
