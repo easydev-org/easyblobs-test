@@ -4,6 +4,10 @@ set -eu
 : "${EASYBLOBS_BASE:?EASYBLOBS_BASE not set}"
 
 # BUILD: produces dist/*, which also validates the package metadata.
+# The build frontend and twine are not always present on a bare runner; installing
+# them is part of preparing the toolchain, not a workaround.
+python3 -c 'import build' 2>/dev/null || python3 -m pip install -q build
+python3 -c 'import twine' 2>/dev/null || python3 -m pip install -q twine
 python3 -m build --outdir dist . 2>&1 | tail -3
 ls dist
 

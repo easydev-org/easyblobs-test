@@ -529,18 +529,20 @@ assert any(n.endswith(".nuspec") for n in names), "no .nuspec in the nupkg"
 print("nuget: nupkg contains the .nuspec (%d entries)" % len(names))
 PY
 
-# PUBLISH to the flat container, which is the layout a nuget client reads.
-base=$(basename "$pkg")
-ver=1.0.0
+# PUBLISH through the SINGLE upload endpoint. nuget is not a path-style push:
+# the flat container (/v3/flatcontainer/...) is READ-only and a PUT there is 404;
+# publishing is `PUT /v3/package` with the nupkg as the body.
 code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \\
-  "$EASYBLOBS_BASE/v3/flatcontainer/easyblobs.test.hello/$ver/$base" \\
+  "$EASYBLOBS_BASE/v3/package" -H 'Content-Type: application/octet-stream' \\
   --data-binary "@$pkg")
 case "$code" in 200|201) ;; *) echo "nuget: upload -> $code" >&2; exit 1 ;; esac
-curl -fsS -o "/tmp/nuget-back" \\
-  "$EASYBLOBS_BASE/v3/flatcontainer/easyblobs.test.hello/$ver/$base"
+
+# READ BACK from the flat container, which is where a nuget client looks.
+curl -fsS -o /tmp/nuget-back \\
+  "$EASYBLOBS_BASE/v3/flatcontainer/easyblobs.test.hello/1.0.0/easyblobs.test.hello.1.0.0.nupkg"
 cmp -s /tmp/nuget-back "$pkg" || {
   echo "nuget: the served nupkg differs from the built one" >&2; exit 1; }
-echo "nuget: built, packed, published and re-read $base (bytes verified)"
+echo "nuget: built, packed, published to /v3/package and re-read (bytes verified)"
 """,
         "dotnet build and dotnet pack produce a real .nupkg, which is then checked "
         "to contain the .nuspec a nuget client reads.\n",
@@ -611,13 +613,17 @@ modules:
 
 package hello.v1;
 
-// A real message the compiler must accept.
-message Request { string name = 1; }
+// buf's DEFAULT lint rules are strict, and a fixture that fails its own linter
+// is broken before it reaches the registry:
+//   Service name "Greeter" should be suffixed with "Service"
+//   RPC request type "Request" should be named "GreetRequest" or
+//   "GreeterGreetRequest"
+message GreetRequest { string name = 1; }
 
-message Reply { string greeting = 1; }
+message GreetResponse { string greeting = 1; }
 
-service Greeter {
-  rpc Greet(Request) returns (Reply);
+service GreeterService {
+  rpc Greet(GreetRequest) returns (GreetResponse);
 }
 """,
         },

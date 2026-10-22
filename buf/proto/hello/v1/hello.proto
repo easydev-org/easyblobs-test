@@ -2,11 +2,15 @@ syntax = "proto3";
 
 package hello.v1;
 
-// A real message the compiler must accept.
-message Request { string name = 1; }
+// buf's DEFAULT lint rules are strict, and a fixture that fails its own linter
+// is broken before it reaches the registry:
+//   Service name "Greeter" should be suffixed with "Service"
+//   RPC request type "Request" should be named "GreetRequest" or
+//   "GreeterGreetRequest"
+message GreetRequest { string name = 1; }
 
-message Reply { string greeting = 1; }
+message GreetResponse { string greeting = 1; }
 
-service Greeter {
-  rpc Greet(Request) returns (Reply);
+service GreeterService {
+  rpc Greet(GreetRequest) returns (GreetResponse);
 }
