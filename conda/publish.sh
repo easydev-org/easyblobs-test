@@ -4,10 +4,16 @@ set -eu
 : "${EASYBLOBS_BASE:?EASYBLOBS_BASE not set}"
 
 # BUILD with conda-build, which is the real packager.
+# conda-build is a SEPARATE package, not a builtin subcommand:
+#   argument COMMAND: invalid choice: 'build'
+# Install it into the base env first, then build.
+if ! conda build --help >/dev/null 2>&1; then
+  conda install -y -q -n base -c conda-forge conda-build >/dev/null 2>&1 || true
+fi
 conda build . --output-folder /tmp/conda-out 2>&1 | tail -5
 
 pkg=$(find /tmp/conda-out -name '*.tar.bz2' -o -name '*.conda' | head -1)
-[ -n "$pkg" ] || { echo "conda: conda-build produced no package" >&2; exit 1; }
+[ -n "$pkg" ] || { echo "conda: conda-build produced no package (is conda-build installed?)" >&2; exit 1; }
 echo "conda: built $pkg"
 
 # READ BACK: the package must be a real archive with the metadata inside.

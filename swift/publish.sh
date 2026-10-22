@@ -10,14 +10,18 @@ swift test 2>&1 | tail -8
 # PUBLISH the source archive to the SwiftPM registry, then read it back.
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-id="easyblobs-test.hello"
+# The registry path is /{scope}/{name}/{version} - THREE segments. A dotted
+# single identifier is rejected with "invalid upload path" (400).
+scope=easyblobs-test
+name=hello
+id="$scope.$name"
 mkdir -p "$TMP/pkg"
 cp -a Package.swift Sources "$TMP/pkg/"
 ( cd "$TMP/pkg" && zip -qr "$TMP/$id-1.0.0.zip" . )
 zipf="$TMP/$id-1.0.0.zip"
 code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
-  "$EASYBLOBS_BASE/$id/1.0.0" --data-binary "@$zipf")
+  "$EASYBLOBS_BASE/$scope/$name/1.0.0" --data-binary "@$zipf")
 case "$code" in 200|201) ;; *) echo "swift: upload -> $code" >&2; exit 1 ;; esac
-curl -fsS -o /dev/null "$EASYBLOBS_BASE/$id/1.0.0" || {
+curl -fsS -o /dev/null "$EASYBLOBS_BASE/$scope/$name/1.0.0" || {
   echo "swift: the release does not resolve after upload" >&2; exit 1; }
 echo "swift: built, tested, published and re-read the release"
