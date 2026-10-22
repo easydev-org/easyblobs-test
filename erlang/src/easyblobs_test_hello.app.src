@@ -1,0 +1,7 @@
+{application, easyblobs_test_hello,
+ [{description, "easyblobs e2e fixture"},
+  {vsn, "1.0.0"},
+  {registered, []},
+  {applications, [kernel, stdlib]},
+  {env, []},
+  {modules, []}]}.

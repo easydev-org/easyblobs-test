@@ -1,0 +1,9 @@
+{
+  "name": "@easyblobs-test/hello",
+  "version": "1.0.0",
+  "description": "easyblobs e2e fixture",
+  "main": "index.js",
+  "files": ["index.js"],
+  "scripts": { "build": "node index.js" },
+  "license": "Apache-2.0"
+}

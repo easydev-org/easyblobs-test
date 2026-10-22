@@ -1,0 +1,18 @@
+plugins {
+    id 'java'
+}
+
+group = 'dev.easyblobs.test'
+version = '1.0.0'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+}
+
+repositories {
+    // Point gradle at the mount: this is the whole point of the fixture.
+    maven {
+        url = uri(System.getenv('EASYBLOBS_BASE') ?: 'http://127.0.0.1:8080/artifacts/maven')
+        allowInsecureProtocol = true
+    }
+}

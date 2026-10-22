@@ -1,0 +1,9 @@
+Package: easyblobstesthello
+Type: Package
+Title: easyblobs e2e fixture
+Version: 1.0.0
+Author: easyblobs
+Maintainer: easyblobs <e2e@example.invalid>
+Description: A real R package used by the easyblobs e2e suite.
+License: Apache License 2.0
+Encoding: UTF-8

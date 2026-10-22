@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package hello.v1;
+
+// A real message the compiler must accept.
+message Request { string name = 1; }
+
+message Reply { string greeting = 1; }
+
+service Greeter {
+  rpc Greet(Request) returns (Reply);
+}

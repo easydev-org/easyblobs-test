@@ -1,0 +1,21 @@
+package:
+  name: easyblobs-test-hello
+  version: "1.0.0"
+
+source:
+  path: .
+
+build:
+  noarch: python
+  script: "python -m pip install . --no-deps -vv"
+
+requirements:
+  host:
+    - python
+    - pip
+  run:
+    - python
+
+about:
+  summary: easyblobs e2e fixture
+  license: Apache-2.0
