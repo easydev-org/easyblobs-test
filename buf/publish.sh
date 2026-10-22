@@ -27,8 +27,10 @@ blobs, manifest = [], []
 for p in paths:
     c = open(p, "rb").read()
     d = shake(c)
-    manifest.append("shake256:" + d.hex() + "  " + p + "
-")
+    # chr(10) rather than an escape sequence: this text is embedded in a generated
+    # shell heredoc, where a backslash-n would have been written out as a REAL
+    # newline and split the Python statement in two.
+    manifest.append("shake256:" + d.hex() + "  " + p + chr(10))
     blobs.append({"digest": {"digestType": 1, "digest": base64.b64encode(d).decode()},
                   "content": base64.b64encode(c).decode()})
 mb = "".join(manifest).encode()

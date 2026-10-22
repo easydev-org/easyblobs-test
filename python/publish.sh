@@ -15,7 +15,11 @@ ls dist
 python3 -c 'import easyblobs_test_hello as m; print(m.greet("easyblobs"))'
 
 # PUBLISH through the mount's upload endpoint (Twine-compatible multipart).
-python3 -m twine upload --repository-url "$EASYBLOBS_BASE/" \
+#
+# Twine POSTs to the repository URL as given, so it must name the upload endpoint
+# exactly - ".../pypi/" answers 404, while ".../pypi/upload" is what the adapter
+# routes to its upload handler.
+python3 -m twine upload --repository-url "$EASYBLOBS_BASE/upload" \
   --username e2e --password e2e --non-interactive dist/* 2>&1 | tail -3
 
 # READ BACK: the PEP 503 simple page must list the wheel.
