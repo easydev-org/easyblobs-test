@@ -29,14 +29,20 @@ python3 - "$pkg" <<'PY'
 import sys, tarfile, zipfile
 p = sys.argv[1]
 if p.endswith(".tar.bz2"):
+    # The v1 layout keeps the metadata at info/index.json.
     with tarfile.open(p, "r:bz2") as t:
         names = t.getnames()
+    assert any("info/index.json" in n for n in names), "no info/index.json"
 elif p.endswith(".conda"):
+    # The v2 layout is a ZIP that contains info-<name>-<ver>.tar.zst, whose own
+    # tar holds info/index.json. Checking only the zip listing therefore finds no
+    # "info/index.json" and wrongly reports a broken package.
     with zipfile.ZipFile(p) as z:
         names = z.namelist()
+    assert any(n.startswith("info-") and n.endswith(".tar.zst")
+               for n in names), "no info-*.tar.zst in the .conda"
 else:
     raise SystemExit("conda: unexpected package format")
-assert any("info/index.json" in n for n in names), "no info/index.json"
 print("conda: package contains info/index.json (%d entries)" % len(names))
 PY
 
