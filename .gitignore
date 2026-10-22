@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+
+# Build outputs the fixtures create when a suite runs them.
+node_modules/
+dist/
+target/
+build/
+_build/
+.venv/
+*.gem
+*.tgz
+bazel-*
+.bazelrc.local
+
+# R
+*.Rcheck/
