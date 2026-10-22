@@ -112,7 +112,19 @@ bazel --bazelrc=.bazelrc.local build //:hello 2>&1 | tail -5
 out=$(bazel --bazelrc=.bazelrc.local info bazel-bin 2>/dev/null)/hello.txt
 [ -f "$out" ] || { echo "bazel: the target did not produce hello.txt" >&2; exit 1; }
 grep -q 'hello easyblobs' "$out" || { echo "bazel: wrong target output" >&2; exit 1; }
-echo "bazel: resolved through the mirror and built //:hello"
+
+# PUBLISH the built artifact to the mount (the BCR layout: modules/<name>/...),
+# then read it back. Resolution through the registry was already exercised above.
+name=rules_hello
+mkdir -p "$TMP/bcr/modules/$name/1.0.0"
+cp "$out" "$TMP/bcr/modules/$name/1.0.0/hello.txt"
+code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \\
+  "$EASYBLOBS_BASE/modules/$name/1.0.0/hello.txt" --data-binary "@$out")
+case "$code" in 200|201) ;; *) echo "bazel: upload -> $code" >&2; exit 1 ;; esac
+curl -fsS -o /tmp/bazel-back "$EASYBLOBS_BASE/modules/$name/1.0.0/hello.txt"
+cmp -s /tmp/bazel-back "$out" || {
+  echo "bazel: the served file differs" >&2; exit 1; }
+echo "bazel: resolved through the mirror, built //:hello and published it"
 """,
         "Resolves a real module dependency through the mirrored BCR with `bazel mod "
         "graph`, then builds a target and checks its output.\n",

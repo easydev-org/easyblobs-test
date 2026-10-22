@@ -175,7 +175,17 @@ mix test
 
 # PACKAGE: the .tar that the hex protocol publishes.
 mix hex.build 2>&1 | tail -5 || echo "hex: hex.build unavailable (hex not installed)"
-echo "hex: compiled, tested and packaged"
+
+# PUBLISH the package tarball to the mount, then read it back.
+pkg=$(ls easyblobs_test_hello-*.tar | head -1)
+[ -n "$pkg" ] || { echo "hex: mix hex.build produced no package" >&2; exit 1; }
+code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \\
+  "$EASYBLOBS_BASE/hex/$pkg" --data-binary "@$pkg")
+case "$code" in 200|201) ;; *) echo "hex: upload -> $code" >&2; exit 1 ;; esac
+curl -fsS -o "/tmp/hex-back-$pkg" "$EASYBLOBS_BASE/hex/$pkg"
+cmp -s "/tmp/hex-back-$pkg" "$pkg" || {
+  echo "hex: the served package differs from the built one" >&2; exit 1; }
+echo "hex: compiled, tested, published and re-read $pkg (bytes verified)"
 """,
         "mix compile --warnings-as-errors and mix test prove the toolchain and the "
         "code, then mix hex.build produces the release tarball.\n",
@@ -220,7 +230,20 @@ rebar3 eunit 2>&1 | tail -8
 
 beam=$(find _build -name 'easyblobs_test_hello.beam' | head -1)
 [ -n "$beam" ] || { echo "erlang: no beam file produced" >&2; exit 1; }
-echo "erlang: compiled and tested $beam"
+
+# PACKAGE + PUBLISH: assemble an archive of the application and push it.
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+tar -czf "$TMP/easyblobs_test_hello-1.0.0.tar.gz" src
+pkg="$TMP/easyblobs_test_hello-1.0.0.tar.gz"
+code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \\
+  "$EASYBLOBS_BASE/hex/easyblobs_test_hello-1.0.0.tar.gz" --data-binary "@$pkg")
+case "$code" in 200|201) ;; *) echo "erlang: upload -> $code" >&2; exit 1 ;; esac
+curl -fsS -o /tmp/erlang-back.tar.gz \\
+  "$EASYBLOBS_BASE/hex/easyblobs_test_hello-1.0.0.tar.gz"
+cmp -s /tmp/erlang-back.tar.gz "$pkg" || {
+  echo "erlang: the served archive differs" >&2; exit 1; }
+echo "erlang: compiled, tested, published and re-read the release (bytes verified)"
 """,
         "Compiles an OTP application with rebar3 and runs its eunit suite.\n",
     )
@@ -275,8 +298,18 @@ make test 2>&1 | tail -5
 
 # PACKAGE: the .tar.gz a CPAN index points at.
 make dist >/dev/null
-ls ./*.tar.gz
-echo "cpan: built, tested and packaged"
+dist=$(ls ./*.tar.gz | head -1)
+[ -n "$dist" ] || { echo "cpan: make dist produced no tarball" >&2; exit 1; }
+
+# PUBLISH it to the mount, then read it back.
+base=$(basename "$dist")
+code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \\
+  "$EASYBLOBS_BASE/authors/id/E/EA/EASY${base}" --data-binary "@$dist")
+case "$code" in 200|201) ;; *) echo "cpan: upload -> $code" >&2; exit 1 ;; esac
+curl -fsS -o "/tmp/cpan-back" "$EASYBLOBS_BASE/authors/id/E/EA/EASY${base}"
+cmp -s /tmp/cpan-back "$dist" || {
+  echo "cpan: the served tarball differs from the built one" >&2; exit 1; }
+echo "cpan: built, tested, published and re-read $base (bytes verified)"
 """,
         "perl Makefile.PL && make && make test is the real CPAN build cycle, then "
         "make dist produces the tarball.\n",
@@ -329,7 +362,15 @@ pkg=$(ls easyblobstesthello_*.tar.gz | head -1)
 mkdir -p /tmp/rlib
 R CMD INSTALL --library=/tmp/rlib "$pkg" 2>&1 | tail -3
 Rscript -e 'library(easyblobstesthello, lib.loc="/tmp/rlib"); cat(greet("easyblobs"), "\\n")'
-echo "cran: built and installed $pkg"
+
+# PUBLISH the source package to the CRAN-style mount, then read it back.
+code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \\
+  "$EASYBLOBS_BASE/src/contrib/$pkg" --data-binary "@$pkg")
+case "$code" in 200|201) ;; *) echo "cran: upload -> $code" >&2; exit 1 ;; esac
+curl -fsS -o /tmp/cran-back.tgz "$EASYBLOBS_BASE/src/contrib/$pkg"
+cmp -s /tmp/cran-back.tgz "$pkg" || {
+  echo "cran: the served tarball differs from the built one" >&2; exit 1; }
+echo "cran: built, installed, published and re-read $pkg (bytes verified)"
 """,
         "R CMD build produces a real source package, R CMD INSTALL installs it, and "
         "the exported function is called.\n",
@@ -365,7 +406,19 @@ set -eu
 # BUILD with the real package manager, then call into the package.
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
 julia --project=. -e 'using EasyblobsTestHello; println(EasyblobsTestHello.greet("easyblobs"))'
-echo "julia: instantiated and ran the package"
+
+# PUBLISH: a tarball of the package, uploaded and read back.
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+tar -czf "$TMP/EasyblobsTestHello-1.0.0.tar.gz" Project.toml src
+pkg="$TMP/EasyblobsTestHello-1.0.0.tar.gz"
+code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \\
+  "$EASYBLOBS_BASE/EasyblobsTestHello/1.0.0.tar.gz" --data-binary "@$pkg")
+case "$code" in 200|201) ;; *) echo "julia: upload -> $code" >&2; exit 1 ;; esac
+curl -fsS -o /tmp/julia-back.tar.gz "$EASYBLOBS_BASE/EasyblobsTestHello/1.0.0.tar.gz"
+cmp -s /tmp/julia-back.tar.gz "$pkg" || {
+  echo "julia: the served package differs" >&2; exit 1; }
+echo "julia: instantiated, ran, published and re-read the package (bytes verified)"
 """,
         "Instantiates the project with Pkg and calls the exported function.\n",
     )
@@ -410,7 +463,21 @@ set -eu
 # BUILD + TEST with SwiftPM, so the compiler and the test runner both run.
 swift build 2>&1 | tail -5
 swift test 2>&1 | tail -8
-echo "swift: built and tested the package"
+
+# PUBLISH the source archive to the SwiftPM registry, then read it back.
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+id="easyblobs-test.hello"
+mkdir -p "$TMP/pkg"
+cp -a Package.swift Sources "$TMP/pkg/"
+( cd "$TMP/pkg" && zip -qr "$TMP/$id-1.0.0.zip" . )
+zipf="$TMP/$id-1.0.0.zip"
+code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \\
+  "$EASYBLOBS_BASE/$id/1.0.0" --data-binary "@$zipf")
+case "$code" in 200|201) ;; *) echo "swift: upload -> $code" >&2; exit 1 ;; esac
+curl -fsS -o /dev/null "$EASYBLOBS_BASE/$id/1.0.0" || {
+  echo "swift: the release does not resolve after upload" >&2; exit 1; }
+echo "swift: built, tested, published and re-read the release"
 """,
         "swift build and swift test compile and exercise a real SwiftPM package.\n",
     )
@@ -457,7 +524,19 @@ with zipfile.ZipFile(sys.argv[1]) as z:
 assert any(n.endswith(".nuspec") for n in names), "no .nuspec in the nupkg"
 print("nuget: nupkg contains the .nuspec (%d entries)" % len(names))
 PY
-echo "nuget: built and packed $pkg"
+
+# PUBLISH to the flat container, which is the layout a nuget client reads.
+base=$(basename "$pkg")
+ver=1.0.0
+code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \\
+  "$EASYBLOBS_BASE/v3/flatcontainer/easyblobs.test.hello/$ver/$base" \\
+  --data-binary "@$pkg")
+case "$code" in 200|201) ;; *) echo "nuget: upload -> $code" >&2; exit 1 ;; esac
+curl -fsS -o "/tmp/nuget-back" \\
+  "$EASYBLOBS_BASE/v3/flatcontainer/easyblobs.test.hello/$ver/$base"
+cmp -s /tmp/nuget-back "$pkg" || {
+  echo "nuget: the served nupkg differs from the built one" >&2; exit 1; }
+echo "nuget: built, packed, published and re-read $base (bytes verified)"
 """,
         "dotnet build and dotnet pack produce a real .nupkg, which is then checked "
         "to contain the .nuspec a nuget client reads.\n",
@@ -498,7 +577,20 @@ mkdir -p /tmp/charts
 helm package . -d /tmp/charts >/dev/null
 chart=$(ls /tmp/charts/easyblobs-test-hello-1.0.0.tgz)
 [ -s "$chart" ] || { echo "helm: no chart produced" >&2; exit 1; }
-echo "helm: linted, rendered and packaged $chart"
+
+# PUBLISH the chart to the mount. The chartmuseum-style push names the chart and
+# version explicitly, because the server records what it is given.
+code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \\
+  "$EASYBLOBS_BASE/api/charts?name=easyblobs-test-hello&version=1.0.0" \\
+  -H 'Content-Type: application/octet-stream' --data-binary "@$chart")
+case "$code" in 200|201) ;; *) echo "helm: upload -> $code" >&2; exit 1 ;; esac
+
+# READ BACK: the served chart must be byte-identical.
+curl -fsS -o /tmp/helm-back.tgz \\
+  "$EASYBLOBS_BASE/charts/easyblobs-test-hello-1.0.0.tgz"
+cmp -s /tmp/helm-back.tgz "$chart" || {
+  echo "helm: the served chart differs from the one uploaded" >&2; exit 1; }
+echo "helm: linted, rendered, published and re-read $chart (bytes verified)"
 """,
         "helm lint, helm template and helm package exercise a real chart.\n",
     )
@@ -534,7 +626,43 @@ set -eu
 buf lint
 buf build -o /tmp/image.bin
 [ -s /tmp/image.bin ] || { echo "buf: build produced no image" >&2; exit 1; }
-echo "buf: linted and built the module ($(wc -c < /tmp/image.bin) bytes)"
+
+# PUBLISH through the BSR push API, the same call `buf push` makes.
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+python3 - "$TMP/push.json" <<'PY'
+import base64, hashlib, json, os, sys
+
+def shake(b):
+    return hashlib.shake_256(b).digest(64)
+
+paths = []
+for root, _, names in os.walk("proto"):
+    for n in names:
+        paths.append(os.path.relpath(os.path.join(root, n)).replace(os.sep, "/"))
+paths.sort()
+
+blobs, manifest = [], []
+for p in paths:
+    c = open(p, "rb").read()
+    d = shake(c)
+    manifest.append("shake256:" + d.hex() + "  " + p + "\n")
+    blobs.append({"digest": {"digestType": 1, "digest": base64.b64encode(d).decode()},
+                  "content": base64.b64encode(c).decode()})
+mb = "".join(manifest).encode()
+json.dump({"owner": "easyblobs-test", "repository": "hello",
+           "manifest": {"digest": {"digestType": 1,
+                                   "digest": base64.b64encode(shake(mb)).decode()},
+                        "content": base64.b64encode(mb).decode()},
+           "blobs": blobs, "tags": ["v1.0.0"]}, open(sys.argv[1], "w"))
+PY
+code=$(curl -sS -o "$TMP/resp.json" -w '%{http_code}' -X POST \\
+  "$EASYBLOBS_BASE/buf.alpha.registry.v1alpha1.PushService/PushManifestAndBlobs" \\
+  -H 'Content-Type: application/json' --data-binary "@$TMP/push.json")
+case "$code" in 200|201) ;; *) echo "buf: push -> $code" >&2; exit 1 ;; esac
+grep -q 'localModulePin' "$TMP/resp.json" || {
+  echo "buf: push returned no module pin" >&2; exit 1; }
+echo "buf: linted, built and published the module"
 """,
         "buf lint and buf build parse a real proto module into an image.\n",
     )

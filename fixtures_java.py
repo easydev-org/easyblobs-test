@@ -114,7 +114,18 @@ jar=$(ls build/libs/*.jar | head -1)
 [ -s "$jar" ] || { echo "gradle: no jar produced" >&2; exit 1; }
 
 java -cp "$jar" dev.easyblobs.test.hello.Main
-echo "gradle: built $jar and ran it"
+
+# PUBLISH the jar to the mount: a build that never reaches the registry does not
+# test the registry. The coordinate matches the gradle project (group/artifact).
+url="$EASYBLOBS_BASE/dev/easyblobs/test/hello/1.0.0/hello-1.0.0.jar"
+code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "$url" --data-binary "@$jar")
+case "$code" in 200|201) ;; *) echo "gradle: PUT jar -> $code" >&2; exit 1 ;; esac
+
+# READ BACK byte-for-byte.
+curl -fsS -o /tmp/gradle-back.jar "$url"
+cmp -s /tmp/gradle-back.jar "$jar" || {
+  echo "gradle: bytes changed in the mirror" >&2; exit 1; }
+echo "gradle: built, ran and published hello-1.0.0.jar (bytes verified)"
 """,
         "Runs a real Gradle build whose repository is the mount, then executes the "
         "jar it produced.\n",
@@ -150,7 +161,21 @@ sbt -batch -Dsbt.log.noformat=true compile 2>&1 | tail -5
 
 out=$(find target -name '*.class' | head -1)
 [ -n "$out" ] || { echo "sbt: compilation produced no classes" >&2; exit 1; }
-echo "sbt: compiled through the mirrored Ivy repository"
+
+# PACKAGE + PUBLISH the compiled output as a jar, then read it back.
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+( cd target && zip -qr "$TMP/hello-1.0.0.jar" . )
+jar="$TMP/hello-1.0.0.jar"
+code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \\
+  "$EASYBLOBS_BASE/dev/easyblobs/test/hello/1.0.0/hello-1.0.0.jar" \\
+  --data-binary "@$jar")
+case "$code" in 200|201) ;; *) echo "sbt: upload -> $code" >&2; exit 1 ;; esac
+curl -fsS -o /tmp/sbt-back.jar \\
+  "$EASYBLOBS_BASE/dev/easyblobs/test/hello/1.0.0/hello-1.0.0.jar"
+cmp -s /tmp/sbt-back.jar "$jar" || {
+  echo "sbt: the served jar differs" >&2; exit 1; }
+echo "sbt: compiled, packaged, published and re-read the jar (bytes verified)"
 """,
         "Compiles a real Scala project with sbt, whose resolvers point at the "
         "mirrored Ivy repository.\n",

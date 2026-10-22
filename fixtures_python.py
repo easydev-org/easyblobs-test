@@ -118,6 +118,19 @@ else:
 assert any("info/index.json" in n for n in names), "no info/index.json"
 print("conda: package contains info/index.json (%d entries)" % len(names))
 PY
+
+# PUBLISH the built package to the mount, under the channel layout a conda
+# client asks for (linux-64/<file>).
+base=$(basename "$pkg")
+code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \\
+  "$EASYBLOBS_BASE/linux-64/$base" --data-binary "@$pkg")
+case "$code" in 200|201) ;; *) echo "conda: upload -> $code" >&2; exit 1 ;; esac
+
+# READ BACK byte-for-byte.
+curl -fsS -o "/tmp/conda-back-$base" "$EASYBLOBS_BASE/linux-64/$base"
+cmp -s "/tmp/conda-back-$base" "$pkg" || {
+  echo "conda: the served package differs from the built one" >&2; exit 1; }
+echo "conda: built, published and re-read $base (bytes verified)"
 """,
         "Builds a package with conda-build and verifies the archive contains the "
         "metadata a conda client reads.\n",
