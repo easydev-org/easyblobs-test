@@ -53,10 +53,11 @@ def main():
     import fixtures_python
     import fixtures_go
     import fixtures_java
+    import fixtures_rust
     import fixtures_others
 
     for mod in (fixtures_node, fixtures_python, fixtures_go, fixtures_java,
-                fixtures_others):
+                fixtures_rust, fixtures_others):
         mod.register(fixture)
 
     for name, spec in FIXTURES.items():

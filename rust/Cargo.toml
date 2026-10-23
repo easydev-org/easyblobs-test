@@ -1,0 +1,9 @@
+[package]
+name = "easyblobs-test-hello"
+version = "1.0.0"
+edition = "2021"
+description = "easyblobs e2e fixture"
+license = "Apache-2.0"
+
+[lib]
+path = "src/lib.rs"

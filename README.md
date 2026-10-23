@@ -35,6 +35,7 @@ the protocol, never in a hand-written stub.
 - `python`
 - `r`
 - `ruby`
+- `rust`
 - `sbt`
 - `swift`
 
