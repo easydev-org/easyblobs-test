@@ -30,35 +30,31 @@ set -eu
 : "${EASYBLOBS_BASE:?EASYBLOBS_BASE not set}"
 
 # BUILD: produces dist/*, which also validates the package metadata.
-# The build frontend and twine are not always present, and pip itself may be
-# missing: easysetup's python setup is pkgs.python315, a bare interpreter with no
-# pip, so `python3 -m pip install build` fails with
-#   No module named pip
-# A wheel is just a zip and an sdist is just a tar, and twine is only needed to
-# POST them - so both are produced directly when pip is unavailable.
-have_pip=0
-python3 -m pip --version >/dev/null 2>&1 && have_pip=1
-if [ "$have_pip" = 1 ]; then
-  python3 -c 'import build' 2>/dev/null || python3 -m pip install -q build
-  python3 -c 'import twine' 2>/dev/null || python3 -m pip install -q twine
+# This drives the REAL packaging tools, because that is what a pypi client is:
+# `python -m build` produces the wheel and sdist, and `twine` uploads them.
+#
+# easysetup publishes pip as its own setup ('pip', which is
+# pythonPackages.pip and brings the interpreter with it) - the 'python' setup
+# alone is a bare interpreter with no pip, so both names have to be requested.
+pip_ok=0
+if python3 -m pip --version >/dev/null 2>&1; then
+  pip_ok=1
+elif command -v pip >/dev/null 2>&1 || command -v pip3 >/dev/null 2>&1; then
+  pip_ok=1
 fi
-if [ "$have_pip" = 1 ] && python3 -c 'import build' 2>/dev/null; then
+if [ "$pip_ok" = 0 ]; then
+  echo "python: no pip on PATH. easysetup publishes it as the separate setup" >&2
+  echo "python: 'pip'; the 'python' setup alone has no pip. interpreter:" >&2
+  echo "python: $(command -v python3 || echo missing)" >&2
+  exit 1
+fi
+echo "python: $(python3 --version 2>&1), pip $(python3 -m pip --version 2>&1 | head -1)"
+
+# The build frontend and twine are libraries, not interpreters; they are
+# installed into this job rather than expected from the closure.
+python3 -c 'import build' 2>/dev/null || python3 -m pip install -q build
+python3 -c 'import twine' 2>/dev/null || python3 -m pip install -q twine
 python3 -m build --outdir dist . 2>&1 | tail -3
-else
-  echo "python: pip/build unavailable; assembling the sdist and wheel directly"
-  mkdir -p dist/pkgsrc/easyblobs_test_hello
-  cp easyblobs_test_hello/__init__.py dist/pkgsrc/easyblobs_test_hello/
-  cat > dist/pkgsrc/PKG-INFO <<'INFO'
-Metadata-Version: 2.1
-Name: easyblobs-test-hello
-Version: 1.0.0
-INFO
-  ( cd dist/pkgsrc && tar -czf ../easyblobs_test_hello-1.0.0.tar.gz PKG-INFO easyblobs_test_hello )
-  # A wheel is a zip whose name encodes the tags; the payload is the package.
-  WHL=dist/easyblobs_test_hello-1.0.0-py3-none-any.whl
-  ( cd dist/pkgsrc && zip -qr "../../$WHL" easyblobs_test_hello PKG-INFO )
-  rm -rf dist/pkgsrc
-fi
 ls dist
 
 # IMPORT the built artifact, so a broken source tree fails here.
@@ -69,27 +65,8 @@ python3 -c 'import easyblobs_test_hello as m; print(m.greet("easyblobs"))'
 # Twine POSTs to the repository URL as given, so it must name the upload endpoint
 # exactly - ".../pypi/" answers 404, while ".../pypi/upload" is what the adapter
 # routes to its upload handler.
-if python3 -c 'import twine' 2>/dev/null; then
-  python3 -m twine upload --repository-url "$EASYBLOBS_BASE/upload" \\
-    --username e2e --password e2e --non-interactive dist/* 2>&1 | tail -3
-else
-  # No twine: POST the same multipart body by hand. PyPI's upload form is a
-  # regular multipart/form-data with :action=file_upload and a content field
-  # per artefact, which curl can send without any python packaging toolkit.
-  echo "python: twine unavailable; POSTing the multipart form directly"
-  for f in dist/*.whl dist/*.tar.gz; do
-    [ -f "$f" ] || continue
-    code=$(curl -sS -o /tmp/pypi-resp.txt -w '%{http_code}' \\
-      -u e2e:e2e \\
-      -F ":action=file_upload" \\
-      -F "protocol_version=1" \\
-      -F "name=easyblobs-test-hello" \\
-      -F "version=1.0.0" \\
-      -F "content=@$f" \\
-      "$EASYBLOBS_BASE/upload")
-    case "$code" in 200|201) ;; *) echo "python: upload $(basename "$f") -> $code" >&2; cat /tmp/pypi-resp.txt >&2; exit 1 ;; esac
-  done
-fi
+python3 -m twine upload --repository-url "$EASYBLOBS_BASE/upload" \\
+  --username e2e --password e2e --non-interactive dist/* 2>&1 | tail -3
 
 # READ BACK: the PEP 503 simple page must list the wheel.
 curl -fsS "$EASYBLOBS_BASE/simple/easyblobs-test-hello/" \\
@@ -147,50 +124,48 @@ def greet(name: str) -> str:
 set -eu
 : "${EASYBLOBS_BASE:?EASYBLOBS_BASE not set}"
 
-# BUILD.
+# BUILD WITH THE REAL CLI.
 #
-# conda-build is a SEPARATE package, not a builtin subcommand ("invalid choice:
-# 'build'"), and installing it needs the conda channel - which is not reachable
-# in this environment. So the package is assembled with `conda package`, which
-# every conda ships, from a real installed environment. That still exercises
-# conda's own packaging path and produces a genuine .tar.bz2/.conda.
-# easysetup's conda setup is `pkgs.conda`, whose closure provides
-# conda-shell-<v>/bin - that is `conda-shell`, NOT `conda`. A bare
-# `conda list` therefore fails with "conda: not found", which says nothing
-# about the registry.
+# easysetup publishes micromamba for conda: it is a conda-compatible package
+# manager in one static binary, with no base installation and no channel
+# bootstrap. So this fixture drives the actual conda workflow instead of
+# hand-assembling an archive - create an environment, install something into it
+# and read the result back, which is what a conda client does.
 #
-# What matters for THIS fixture is that a real conda .conda archive reaches the
-# mount and comes back byte-identical, so the archive is built directly when the
-# conda CLI is absent: the v2 format is a zip whose info-*.tar.zst carries
-# info/index.json, and that is exactly what the read-back below verifies.
-mkdir -p /tmp/conda-out
-if ! command -v conda >/dev/null 2>&1; then
-  echo "conda: no conda CLI on PATH (the setup is conda-shell); building the archive directly"
-  W=$(mktemp -d)
-  mkdir -p "$W/info"
-  cat > "$W/info/index.json" <<'JSON'
-{"name":"easyblobs-test-hello","version":"1.0.0","build":"0","build_number":0,
- "subdir":"linux-64","depends":[],"license":"Apache-2.0"}
-JSON
-  printf 'hello easyblobs\n' > "$W/hello.txt"
-  ( cd "$W" && tar -cf info.tar info && zstd -q -o info-easyblobs-test-hello-1.0.0.tar.zst info.tar && rm -f info.tar )
-  ( cd "$W" && zip -qr /tmp/conda-out/easyblobs-test-hello-1.0.0-0.conda info-easyblobs-test-hello-1.0.0.tar.zst hello.txt )
-  rm -rf "$W"
-  pkg=/tmp/conda-out/easyblobs-test-hello-1.0.0-0.conda
-else
-  hex=$(conda list -n base --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))')
-  [ "$hex" -gt 0 ] || { echo "conda: the base environment lists no packages" >&2; exit 1; }
+# conda-build (the recipe packager) is deliberately not used: it needs the
+# conda-forge channel and compiles a recipe, which is a different subject from
+# whether the registry serves a channel correctly.
+MM=micromamba
+command -v "$MM" >/dev/null 2>&1 || MM=conda
+command -v "$MM" >/dev/null 2>&1 || {
+  echo "conda: neither micromamba nor conda is on PATH; easysetup publishes" >&2
+  echo "conda: 'micromamba' for this protocol - check the setup list" >&2
+  exit 1; }
+echo "conda: using $MM ($("$MM" --version 2>&1 | head -1))"
 
-# `conda package` needs an installed prefix and writes to the package cache.
-# NOTE: `conda package` has NO --output-folder flag ("unrecognized arguments");
-# it always writes into <base>/pkgs, which the fallback below already looks at.
-conda package -n base 2>&1 | tail -3 || true
+# A real environment with a real package in it. --root-prefix keeps everything
+# under /tmp so nothing leaks into the container's HOME.
+export MAMBA_ROOT_PREFIX=/tmp/mamba-root
+"$MM" create -y -q -p /tmp/conda-env -c conda-forge --override-channels "$MM" 2>&1 | tail -5
+"$MM" list -p /tmp/conda-env >/tmp/conda-list.txt
+[ -s /tmp/conda-list.txt ] || { echo "conda: the created environment lists no packages" >&2; exit 1; }
+echo "conda: environment has $(wc -l < /tmp/conda-list.txt) package(s)"
+
+# PACKAGE the environment with the tool's own packager, then verify the archive
+# carries the metadata a conda client reads.
+mkdir -p /tmp/conda-out
+if "$MM" package -p /tmp/conda-env -o /tmp/conda-out >/dev/null 2>&1; then
+  echo "conda: packaged with '$MM package'"
 fi
 
 pkg=$(find /tmp/conda-out -name '*.tar.bz2' -o -name '*.conda' 2>/dev/null | head -1)
-if [ -z "$pkg" ] && command -v conda >/dev/null 2>&1; then
-  pkg=$(find "$(conda info --base 2>/dev/null)/pkgs" -maxdepth 1 \
-    -name '*.tar.bz2' -o -maxdepth 1 -name '*.conda' 2>/dev/null | head -1)
+if [ -z "$pkg" ]; then
+  # `micromamba package` is not available in every build, so fall back to the
+  # package cache that `create` just populated: those .conda files ARE the real
+  # artefacts a channel serves, produced by the real tool.
+  pkg=$(find "$MAMBA_ROOT_PREFIX/pkgs" -maxdepth 1 \
+    \( -name '*.conda' -o -name '*.tar.bz2' \) 2>/dev/null | head -1)
+  [ -n "$pkg" ] && echo "conda: using an archive from the package cache"
 fi
 [ -n "$pkg" ] || { echo "conda: no package archive was produced" >&2; exit 1; }
 echo "conda: built $pkg"
