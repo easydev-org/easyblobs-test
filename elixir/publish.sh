@@ -48,9 +48,12 @@ code=$(curl -sS -o /tmp/hex-resp.json -w '%{http_code}' -X POST \
   -H 'Content-Type: application/octet-stream' --data-binary "@$pkg")
 case "$code" in 200|201) ;; *) echo "hex: publish -> $code" >&2; cat /tmp/hex-resp.json >&2; exit 1 ;; esac
 
-# READ BACK: the release must be retrievable and byte-identical.
+# READ BACK from the TARBALL endpoint. .../packages/<n>/releases/<v> is the
+# release METADATA (JSON); the bytes live under /tarballs/<name>-<version>.tar.
+# Comparing the tarball against that JSON reported "the served package differs",
+# which was wrong about the cause.
 curl -fsS -o /tmp/hex-back.tar \
-  "$EASYBLOBS_BASE/packages/easyblobs_test_hello/releases/1.0.0"
+  "$EASYBLOBS_BASE/tarballs/easyblobs_test_hello-1.0.0.tar"
 cmp -s /tmp/hex-back.tar "$pkg" || {
   echo "hex: the served package differs from the built one" >&2; exit 1; }
 echo "hex: compiled, tested, published and re-read $pkg (bytes verified)"
