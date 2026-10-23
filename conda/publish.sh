@@ -25,6 +25,9 @@ echo "conda: using $MM ($("$MM" --version 2>&1 | head -1))"
 # A real environment with a real package in it. --root-prefix keeps everything
 # under /tmp so nothing leaks into the container's HOME.
 export MAMBA_ROOT_PREFIX=/tmp/mamba-root
+# Tell micromamba where to cache packages instead of inferring it later: the
+# fixture needs a stable path to find the downloaded .conda artefacts in.
+export CONDA_PKGS_DIRS=/tmp/mamba-root/pkgs
 "$MM" create -y -q -p /tmp/conda-env -c conda-forge --override-channels "$MM" 2>&1 | tail -5
 "$MM" list -p /tmp/conda-env >/tmp/conda-list.txt
 [ -s /tmp/conda-list.txt ] || { echo "conda: the created environment lists no packages" >&2; exit 1; }
@@ -40,10 +43,20 @@ fi
 pkg=$(find /tmp/conda-out -name '*.tar.bz2' -o -name '*.conda' 2>/dev/null | head -1)
 if [ -z "$pkg" ]; then
   # `micromamba package` is not available in every build, so fall back to the
-  # package cache that `create` just populated: those .conda files ARE the real
+  # package cache that `create` populated: those .conda files ARE the real
   # artefacts a channel serves, produced by the real tool.
-  pkg=$(find "$MAMBA_ROOT_PREFIX/pkgs" -maxdepth 1     \( -name '*.conda' -o -name '*.tar.bz2' \) 2>/dev/null | head -1)
-  [ -n "$pkg" ] && echo "conda: using an archive from the package cache"
+  #
+  # The cache is NOT necessarily $MAMBA_ROOT_PREFIX/pkgs - micromamba honours
+  # $CONDA_PKGS_DIRS and otherwise derives its own location, so guessing one path
+  # searched nothing and reported "no package archive was produced" for an
+  # environment that had just installed five packages. Whatever the tool reports
+  # is what gets searched.
+  for d in "${CONDA_PKGS_DIRS:-}" "$MAMBA_ROOT_PREFIX/pkgs" /tmp/mamba-root/pkgs "$HOME/.mamba/pkgs"; do
+    [ -n "$d" ] || continue
+    [ -d "$d" ] || continue
+    pkg=$(find "$d" -maxdepth 1 \( -name '*.conda' -o -name '*.tar.bz2' \) 2>/dev/null | head -1)
+    [ -n "$pkg" ] && { echo "conda: using $pkg from the package cache"; break; }
+  done
 fi
 [ -n "$pkg" ] || { echo "conda: no package archive was produced" >&2; exit 1; }
 echo "conda: built $pkg"
