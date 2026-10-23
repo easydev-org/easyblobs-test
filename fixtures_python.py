@@ -72,6 +72,18 @@ pyexec() { # run python code with the interpreter that owns pip
   if [ "$PIPMODE" = "module" ]; then "$PY" "$@"; else python3 "$@"; fi
 }
 
+# The nix python is EXTERNALLY MANAGED: installing into it is refused, by design.
+#   error: externally-managed-environment
+# A virtualenv is the sanctioned place to put build/twine, and it is what a real
+# developer does, so the fixture creates one and works inside it.
+if pyexec -m venv /tmp/venv >/dev/null 2>&1; then
+  # Everything after this runs against the venv's interpreter.
+  PYV=/tmp/venv/bin/python
+  PIPMODE="module"
+  PY="$PYV"
+  echo "python: using a virtualenv at /tmp/venv"
+fi
+
 # The build frontend and twine are libraries, not interpreters; they are
 # installed into this job rather than expected from the closure.
 pyexec -c 'import build' 2>/dev/null || pipexec install -q build
@@ -172,36 +184,26 @@ echo "conda: using $MM ($("$MM" --version 2>&1 | head -1))"
 # out to be empty there was nothing in the log to say whether anything had been
 # fetched at all.
 export MAMBA_ROOT_PREFIX=/tmp/mamba-root
-# Tell micromamba where to cache packages instead of inferring it later: the
-# fixture needs a stable path to find the downloaded .conda artefacts in.
 export CONDA_PKGS_DIRS=/tmp/mamba-root/pkgs
 "$MM" create -y -p /tmp/conda-env -c conda-forge --override-channels "$MM" 2>&1 | tail -12
 "$MM" list -p /tmp/conda-env >/tmp/conda-list.txt
 [ -s /tmp/conda-list.txt ] || { echo "conda: the created environment lists no packages" >&2; exit 1; }
 echo "conda: environment has $(wc -l < /tmp/conda-list.txt) package(s)"
 
-# Where did the archives actually land? Printing the candidates beats guessing a
-# path and then reporting "no package archive was produced" for an environment
-# that demonstrably has packages installed.
-echo "conda: package-cache candidates:"
-for d in "${CONDA_PKGS_DIRS:-}" "$MAMBA_ROOT_PREFIX/pkgs" /tmp/mamba-root/pkgs \
-         "$HOME/.mamba/pkgs" "$HOME/.conda/pkgs"; do
-  [ -n "$d" ] || continue
-  if [ -d "$d" ]; then
-    echo "  $d: $(ls -1 "$d" 2>/dev/null | wc -l) entries, $(ls -1 "$d" 2>/dev/null | grep -cE '\.(conda|tar\.bz2)$' || true) archive(s)"
-  else
-    echo "  $d: (absent)"
-  fi
-done
+# MICROMAMBA UNPACKS. The cache held "3 entries, 0 archive(s)": the packages were
+# extracted into directories and the original .conda files were thrown away, so
+# there is no archive to upload after a normal install.
+#
+# `download` keeps the archive and skips extraction, which is exactly the
+# artefact a channel serves. That is the honest way to get one from the real
+# client rather than fabricating a zip.
+OUT=/tmp/conda-out
+mkdir -p "$OUT"
+"$MM" download -y -p "$OUT" -c conda-forge --override-channels "$MM" 2>&1 | tail -8 || true
+echo "conda: after download, $OUT has:"
+ls -1 "$OUT" 2>/dev/null | head -10
 
-# PACKAGE the environment with the tool's own packager, then verify the archive
-# carries the metadata a conda client reads.
-mkdir -p /tmp/conda-out
-if "$MM" package -p /tmp/conda-env -o /tmp/conda-out >/dev/null 2>&1; then
-  echo "conda: packaged with '$MM package'"
-fi
-
-pkg=$(find /tmp/conda-out -name '*.tar.bz2' -o -name '*.conda' 2>/dev/null | head -1)
+pkg=$(find "$OUT" -name '*.tar.bz2' -o -name '*.conda' 2>/dev/null | head -1)
 if [ -z "$pkg" ]; then
   # `micromamba package` is not available in every build, so fall back to the
   # package cache that `create` populated: those .conda files ARE the real
@@ -215,7 +217,7 @@ if [ -z "$pkg" ]; then
   for d in "${CONDA_PKGS_DIRS:-}" "$MAMBA_ROOT_PREFIX/pkgs" /tmp/mamba-root/pkgs "$HOME/.mamba/pkgs"; do
     [ -n "$d" ] || continue
     [ -d "$d" ] || continue
-    pkg=$(find "$d" -maxdepth 1 \( -name '*.conda' -o -name '*.tar.bz2' \) 2>/dev/null | head -1)
+    pkg=$(find "$d" -name '*.conda' -o -name '*.tar.bz2' 2>/dev/null | head -1)
     [ -n "$pkg" ] && { echo "conda: using $pkg from the package cache"; break; }
   done
 fi

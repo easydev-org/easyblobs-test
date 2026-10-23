@@ -46,6 +46,18 @@ pyexec() { # run python code with the interpreter that owns pip
   if [ "$PIPMODE" = "module" ]; then "$PY" "$@"; else python3 "$@"; fi
 }
 
+# The nix python is EXTERNALLY MANAGED: installing into it is refused, by design.
+#   error: externally-managed-environment
+# A virtualenv is the sanctioned place to put build/twine, and it is what a real
+# developer does, so the fixture creates one and works inside it.
+if pyexec -m venv /tmp/venv >/dev/null 2>&1; then
+  # Everything after this runs against the venv's interpreter.
+  PYV=/tmp/venv/bin/python
+  PIPMODE="module"
+  PY="$PYV"
+  echo "python: using a virtualenv at /tmp/venv"
+fi
+
 # The build frontend and twine are libraries, not interpreters; they are
 # installed into this job rather than expected from the closure.
 pyexec -c 'import build' 2>/dev/null || pipexec install -q build
