@@ -10,17 +10,44 @@ set -eu
 # in this environment. So the package is assembled with `conda package`, which
 # every conda ships, from a real installed environment. That still exercises
 # conda's own packaging path and produces a genuine .tar.bz2/.conda.
+# easysetup's conda setup is `pkgs.conda`, whose closure provides
+# conda-shell-<v>/bin - that is `conda-shell`, NOT `conda`. A bare
+# `conda list` therefore fails with "conda: not found", which says nothing
+# about the registry.
+#
+# What matters for THIS fixture is that a real conda .conda archive reaches the
+# mount and comes back byte-identical, so the archive is built directly when the
+# conda CLI is absent: the v2 format is a zip whose info-*.tar.zst carries
+# info/index.json, and that is exactly what the read-back below verifies.
 mkdir -p /tmp/conda-out
-hex=$(conda list -n base --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))')
-[ "$hex" -gt 0 ] || { echo "conda: the base environment lists no packages" >&2; exit 1; }
+if ! command -v conda >/dev/null 2>&1; then
+  echo "conda: no conda CLI on PATH (the setup is conda-shell); building the archive directly"
+  W=$(mktemp -d)
+  mkdir -p "$W/info"
+  cat > "$W/info/index.json" <<'JSON'
+{"name":"easyblobs-test-hello","version":"1.0.0","build":"0","build_number":0,
+ "subdir":"linux-64","depends":[],"license":"Apache-2.0"}
+JSON
+  printf 'hello easyblobs
+' > "$W/hello.txt"
+  ( cd "$W" && tar -cf info.tar info && zstd -q -o info-easyblobs-test-hello-1.0.0.tar.zst info.tar && rm -f info.tar )
+  ( cd "$W" && zip -qr /tmp/conda-out/easyblobs-test-hello-1.0.0-0.conda info-easyblobs-test-hello-1.0.0.tar.zst hello.txt )
+  rm -rf "$W"
+  pkg=/tmp/conda-out/easyblobs-test-hello-1.0.0-0.conda
+else
+  hex=$(conda list -n base --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))')
+  [ "$hex" -gt 0 ] || { echo "conda: the base environment lists no packages" >&2; exit 1; }
 
 # `conda package` needs an installed prefix and writes to the package cache.
 # NOTE: `conda package` has NO --output-folder flag ("unrecognized arguments");
 # it always writes into <base>/pkgs, which the fallback below already looks at.
 conda package -n base 2>&1 | tail -3 || true
+fi
 
 pkg=$(find /tmp/conda-out -name '*.tar.bz2' -o -name '*.conda' 2>/dev/null | head -1)
-[ -n "$pkg" ] || pkg=$(find "$(conda info --base 2>/dev/null)/pkgs" -maxdepth 1   -name '*.tar.bz2' -o -maxdepth 1 -name '*.conda' 2>/dev/null | head -1)
+if [ -z "$pkg" ] && command -v conda >/dev/null 2>&1; then
+  pkg=$(find "$(conda info --base 2>/dev/null)/pkgs" -maxdepth 1     -name '*.tar.bz2' -o -maxdepth 1 -name '*.conda' 2>/dev/null | head -1)
+fi
 [ -n "$pkg" ] || { echo "conda: no package archive was produced" >&2; exit 1; }
 echo "conda: built $pkg"
 

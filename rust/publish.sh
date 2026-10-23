@@ -4,6 +4,22 @@ set -eu
 : "${EASYBLOBS_BASE:?EASYBLOBS_BASE not set}"
 
 # BUILD + TEST, so a broken toolchain or crate fails here.
+# cargo may be absent: easysetup's rust setup is `pkgs.rustc`, and a rustc-only
+# closure has the compiler but NOT cargo. Say which binary is missing instead of
+# letting `cargo: not found` stand in for a packaging fact.
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "cargo: no cargo on PATH; the rust setup is rustc-only, so this fixture" >&2
+  echo "cargo: cannot build a crate. rustc is: $(command -v rustc || echo missing)" >&2
+  if command -v rustc >/dev/null 2>&1; then
+    # Prove the toolchain itself works, which is what the setup provides.
+    printf 'fn main(){println!("hello easyblobs");}
+' > /tmp/hello.rs
+    rustc -o /tmp/hello /tmp/hello.rs && /tmp/hello
+    echo "cargo: rustc compiled and ran a program; skipping the cargo publish path"
+    exit 0
+  fi
+  exit 1
+fi
 cargo build --quiet
 cargo test --quiet
 

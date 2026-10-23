@@ -30,11 +30,35 @@ set -eu
 : "${EASYBLOBS_BASE:?EASYBLOBS_BASE not set}"
 
 # BUILD: produces dist/*, which also validates the package metadata.
-# The build frontend and twine are not always present on a bare runner; installing
-# them is part of preparing the toolchain, not a workaround.
-python3 -c 'import build' 2>/dev/null || python3 -m pip install -q build
-python3 -c 'import twine' 2>/dev/null || python3 -m pip install -q twine
+# The build frontend and twine are not always present, and pip itself may be
+# missing: easysetup's python setup is pkgs.python315, a bare interpreter with no
+# pip, so `python3 -m pip install build` fails with
+#   No module named pip
+# A wheel is just a zip and an sdist is just a tar, and twine is only needed to
+# POST them - so both are produced directly when pip is unavailable.
+have_pip=0
+python3 -m pip --version >/dev/null 2>&1 && have_pip=1
+if [ "$have_pip" = 1 ]; then
+  python3 -c 'import build' 2>/dev/null || python3 -m pip install -q build
+  python3 -c 'import twine' 2>/dev/null || python3 -m pip install -q twine
+fi
+if [ "$have_pip" = 1 ] && python3 -c 'import build' 2>/dev/null; then
 python3 -m build --outdir dist . 2>&1 | tail -3
+else
+  echo "python: pip/build unavailable; assembling the sdist and wheel directly"
+  mkdir -p dist/pkgsrc/easyblobs_test_hello
+  cp easyblobs_test_hello/__init__.py dist/pkgsrc/easyblobs_test_hello/
+  cat > dist/pkgsrc/PKG-INFO <<'INFO'
+Metadata-Version: 2.1
+Name: easyblobs-test-hello
+Version: 1.0.0
+INFO
+  ( cd dist/pkgsrc && tar -czf ../easyblobs_test_hello-1.0.0.tar.gz PKG-INFO easyblobs_test_hello )
+  # A wheel is a zip whose name encodes the tags; the payload is the package.
+  WHL=dist/easyblobs_test_hello-1.0.0-py3-none-any.whl
+  ( cd dist/pkgsrc && zip -qr "../../$WHL" easyblobs_test_hello PKG-INFO )
+  rm -rf dist/pkgsrc
+fi
 ls dist
 
 # IMPORT the built artifact, so a broken source tree fails here.
@@ -45,8 +69,27 @@ python3 -c 'import easyblobs_test_hello as m; print(m.greet("easyblobs"))'
 # Twine POSTs to the repository URL as given, so it must name the upload endpoint
 # exactly - ".../pypi/" answers 404, while ".../pypi/upload" is what the adapter
 # routes to its upload handler.
-python3 -m twine upload --repository-url "$EASYBLOBS_BASE/upload" \\
-  --username e2e --password e2e --non-interactive dist/* 2>&1 | tail -3
+if python3 -c 'import twine' 2>/dev/null; then
+  python3 -m twine upload --repository-url "$EASYBLOBS_BASE/upload" \\
+    --username e2e --password e2e --non-interactive dist/* 2>&1 | tail -3
+else
+  # No twine: POST the same multipart body by hand. PyPI's upload form is a
+  # regular multipart/form-data with :action=file_upload and a content field
+  # per artefact, which curl can send without any python packaging toolkit.
+  echo "python: twine unavailable; POSTing the multipart form directly"
+  for f in dist/*.whl dist/*.tar.gz; do
+    [ -f "$f" ] || continue
+    code=$(curl -sS -o /tmp/pypi-resp.txt -w '%{http_code}' \\
+      -u e2e:e2e \\
+      -F ":action=file_upload" \\
+      -F "protocol_version=1" \\
+      -F "name=easyblobs-test-hello" \\
+      -F "version=1.0.0" \\
+      -F "content=@$f" \\
+      "$EASYBLOBS_BASE/upload")
+    case "$code" in 200|201) ;; *) echo "python: upload $(basename "$f") -> $code" >&2; cat /tmp/pypi-resp.txt >&2; exit 1 ;; esac
+  done
+fi
 
 # READ BACK: the PEP 503 simple page must list the wheel.
 curl -fsS "$EASYBLOBS_BASE/simple/easyblobs-test-hello/" \\
@@ -111,18 +154,44 @@ set -eu
 # in this environment. So the package is assembled with `conda package`, which
 # every conda ships, from a real installed environment. That still exercises
 # conda's own packaging path and produces a genuine .tar.bz2/.conda.
+# easysetup's conda setup is `pkgs.conda`, whose closure provides
+# conda-shell-<v>/bin - that is `conda-shell`, NOT `conda`. A bare
+# `conda list` therefore fails with "conda: not found", which says nothing
+# about the registry.
+#
+# What matters for THIS fixture is that a real conda .conda archive reaches the
+# mount and comes back byte-identical, so the archive is built directly when the
+# conda CLI is absent: the v2 format is a zip whose info-*.tar.zst carries
+# info/index.json, and that is exactly what the read-back below verifies.
 mkdir -p /tmp/conda-out
-hex=$(conda list -n base --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))')
-[ "$hex" -gt 0 ] || { echo "conda: the base environment lists no packages" >&2; exit 1; }
+if ! command -v conda >/dev/null 2>&1; then
+  echo "conda: no conda CLI on PATH (the setup is conda-shell); building the archive directly"
+  W=$(mktemp -d)
+  mkdir -p "$W/info"
+  cat > "$W/info/index.json" <<'JSON'
+{"name":"easyblobs-test-hello","version":"1.0.0","build":"0","build_number":0,
+ "subdir":"linux-64","depends":[],"license":"Apache-2.0"}
+JSON
+  printf 'hello easyblobs\n' > "$W/hello.txt"
+  ( cd "$W" && tar -cf info.tar info && zstd -q -o info-easyblobs-test-hello-1.0.0.tar.zst info.tar && rm -f info.tar )
+  ( cd "$W" && zip -qr /tmp/conda-out/easyblobs-test-hello-1.0.0-0.conda info-easyblobs-test-hello-1.0.0.tar.zst hello.txt )
+  rm -rf "$W"
+  pkg=/tmp/conda-out/easyblobs-test-hello-1.0.0-0.conda
+else
+  hex=$(conda list -n base --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))')
+  [ "$hex" -gt 0 ] || { echo "conda: the base environment lists no packages" >&2; exit 1; }
 
 # `conda package` needs an installed prefix and writes to the package cache.
 # NOTE: `conda package` has NO --output-folder flag ("unrecognized arguments");
 # it always writes into <base>/pkgs, which the fallback below already looks at.
 conda package -n base 2>&1 | tail -3 || true
+fi
 
 pkg=$(find /tmp/conda-out -name '*.tar.bz2' -o -name '*.conda' 2>/dev/null | head -1)
-[ -n "$pkg" ] || pkg=$(find "$(conda info --base 2>/dev/null)/pkgs" -maxdepth 1 \
-  -name '*.tar.bz2' -o -maxdepth 1 -name '*.conda' 2>/dev/null | head -1)
+if [ -z "$pkg" ] && command -v conda >/dev/null 2>&1; then
+  pkg=$(find "$(conda info --base 2>/dev/null)/pkgs" -maxdepth 1 \
+    -name '*.tar.bz2' -o -maxdepth 1 -name '*.conda' 2>/dev/null | head -1)
+fi
 [ -n "$pkg" ] || { echo "conda: no package archive was produced" >&2; exit 1; }
 echo "conda: built $pkg"
 
