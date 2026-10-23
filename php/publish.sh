@@ -17,7 +17,10 @@ else
   echo "composer: not installed (easysetup has php, not composer); using a plain autoloader"
   cat > autoload.php <<'PHP'
 <?php
-require __DIR__ . '/src/Greeter.php';
+// __DIR__ here is the vendor/ directory (the file is copied there), so the
+// source tree is one level up. Getting this wrong gave
+//   Failed to open stream: .../vendor/src/Greeter.php
+require __DIR__ . '/../src/Greeter.php';
 PHP
   # main.php requires vendor/autoload.php; give it one without composer.
   mkdir -p vendor
