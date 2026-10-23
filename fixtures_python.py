@@ -48,38 +48,46 @@ for cand in python3 python; do
   command -v "$cand" >/dev/null 2>&1 || continue
   if "$cand" -m pip --version >/dev/null 2>&1; then PY="$cand"; break; fi
 done
-if [ -z "$PY" ]; then
-  # No interpreter could import pip; fall back to the pip script itself, which
-  # carries its own interpreter.
-  if command -v pip >/dev/null 2>&1; then
-    PY="$(head -1 "$(command -v pip)" | sed -e 's|^#!||' -e 's| .*||')"
-  fi
-fi
-if [ -z "$PY" ]; then
-  echo "python: no interpreter with pip. easysetup publishes pip as the separate" >&2
-  echo "python: setup 'pip'; the 'python' setup alone has no pip. Found:" >&2
+# No interpreter could import pip. The 'pip' setup provides a pip WRAPPER whose
+# own python is the one that has pip, so drive that wrapper directly rather than
+# trying to reverse-engineer its shebang (which is not a plain path here and made
+# the previous fallback yield an empty interpreter).
+PIPMODE=""
+if [ -n "$PY" ]; then
+  PIPMODE="module"
+  echo "python: interpreter $PY ($($PY --version 2>&1)), $($PY -m pip --version 2>&1 | head -1)"
+elif command -v pip >/dev/null 2>&1 && pip --version >/dev/null 2>&1; then
+  PIPMODE="wrapper"
+  echo "python: using the pip wrapper at $(command -v pip) ($(pip --version 2>&1 | head -1))"
+else
+  echo "python: no pip at all. easysetup publishes it as the separate setup 'pip';" >&2
+  echo "python: the 'python' setup alone has no pip. Found:" >&2
   echo "python: python3=$(command -v python3 || echo missing) pip=$(command -v pip || echo missing)" >&2
   exit 1
 fi
-echo "python: interpreter $PY ($($PY --version 2>&1)), $($PY -m pip --version 2>&1 | head -1)"
+pipexec() {
+  if [ "$PIPMODE" = "module" ]; then "$PY" -m pip "$@"; else pip "$@"; fi
+}
+pyexec() { # run python code with the interpreter that owns pip
+  if [ "$PIPMODE" = "module" ]; then "$PY" "$@"; else python3 "$@"; fi
+}
 
 # The build frontend and twine are libraries, not interpreters; they are
 # installed into this job rather than expected from the closure.
-$PY -c 'import build' 2>/dev/null || $PY -m pip install -q build
-$PY -c 'import twine' 2>/dev/null || $PY -m pip install -q twine
-$PY -m build --outdir dist . 2>&1 | tail -3
+pyexec -c 'import build' 2>/dev/null || pipexec install -q build
+pyexec -c 'import twine' 2>/dev/null || pipexec install -q twine
+pyexec -m build --outdir dist . 2>&1 | tail -3
 ls dist
 
 # IMPORT the built artifact, so a broken source tree fails here.
-PYTHONPATH=dist $PY -c 'import easyblobs_test_hello as m; print(m.greet("easyblobs"))' 2>/dev/null || \
-  $PY -c 'import sys; sys.path.insert(0,"."); import easyblobs_test_hello as m; print(m.greet("easyblobs"))'
+pyexec -c 'import easyblobs_test_hello as m; print(m.greet("easyblobs"))'
 
 # PUBLISH through the mount's upload endpoint (Twine-compatible multipart).
 #
 # Twine POSTs to the repository URL as given, so it must name the upload endpoint
 # exactly - ".../pypi/" answers 404, while ".../pypi/upload" is what the adapter
 # routes to its upload handler.
-$PY -m twine upload --repository-url "$EASYBLOBS_BASE/upload" \\
+pyexec -m twine upload --repository-url "$EASYBLOBS_BASE/upload" \\
   --username e2e --password e2e --non-interactive dist/* 2>&1 | tail -3
 
 # READ BACK: the PEP 503 simple page must list the wheel.
@@ -157,16 +165,34 @@ command -v "$MM" >/dev/null 2>&1 || {
   exit 1; }
 echo "conda: using $MM ($("$MM" --version 2>&1 | head -1))"
 
-# A real environment with a real package in it. --root-prefix keeps everything
+# A real environment with a real package in it. MAMBA_ROOT_PREFIX keeps everything
 # under /tmp so nothing leaks into the container's HOME.
+#
+# NOT -q: the quiet flag hid the download/unpack lines, so when the cache turned
+# out to be empty there was nothing in the log to say whether anything had been
+# fetched at all.
 export MAMBA_ROOT_PREFIX=/tmp/mamba-root
 # Tell micromamba where to cache packages instead of inferring it later: the
 # fixture needs a stable path to find the downloaded .conda artefacts in.
 export CONDA_PKGS_DIRS=/tmp/mamba-root/pkgs
-"$MM" create -y -q -p /tmp/conda-env -c conda-forge --override-channels "$MM" 2>&1 | tail -5
+"$MM" create -y -p /tmp/conda-env -c conda-forge --override-channels "$MM" 2>&1 | tail -12
 "$MM" list -p /tmp/conda-env >/tmp/conda-list.txt
 [ -s /tmp/conda-list.txt ] || { echo "conda: the created environment lists no packages" >&2; exit 1; }
 echo "conda: environment has $(wc -l < /tmp/conda-list.txt) package(s)"
+
+# Where did the archives actually land? Printing the candidates beats guessing a
+# path and then reporting "no package archive was produced" for an environment
+# that demonstrably has packages installed.
+echo "conda: package-cache candidates:"
+for d in "${CONDA_PKGS_DIRS:-}" "$MAMBA_ROOT_PREFIX/pkgs" /tmp/mamba-root/pkgs \
+         "$HOME/.mamba/pkgs" "$HOME/.conda/pkgs"; do
+  [ -n "$d" ] || continue
+  if [ -d "$d" ]; then
+    echo "  $d: $(ls -1 "$d" 2>/dev/null | wc -l) entries, $(ls -1 "$d" 2>/dev/null | grep -cE '\.(conda|tar\.bz2)$' || true) archive(s)"
+  else
+    echo "  $d: (absent)"
+  fi
+done
 
 # PACKAGE the environment with the tool's own packager, then verify the archive
 # carries the metadata a conda client reads.

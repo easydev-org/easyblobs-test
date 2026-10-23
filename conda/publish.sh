@@ -22,16 +22,33 @@ command -v "$MM" >/dev/null 2>&1 || {
   exit 1; }
 echo "conda: using $MM ($("$MM" --version 2>&1 | head -1))"
 
-# A real environment with a real package in it. --root-prefix keeps everything
+# A real environment with a real package in it. MAMBA_ROOT_PREFIX keeps everything
 # under /tmp so nothing leaks into the container's HOME.
+#
+# NOT -q: the quiet flag hid the download/unpack lines, so when the cache turned
+# out to be empty there was nothing in the log to say whether anything had been
+# fetched at all.
 export MAMBA_ROOT_PREFIX=/tmp/mamba-root
 # Tell micromamba where to cache packages instead of inferring it later: the
 # fixture needs a stable path to find the downloaded .conda artefacts in.
 export CONDA_PKGS_DIRS=/tmp/mamba-root/pkgs
-"$MM" create -y -q -p /tmp/conda-env -c conda-forge --override-channels "$MM" 2>&1 | tail -5
+"$MM" create -y -p /tmp/conda-env -c conda-forge --override-channels "$MM" 2>&1 | tail -12
 "$MM" list -p /tmp/conda-env >/tmp/conda-list.txt
 [ -s /tmp/conda-list.txt ] || { echo "conda: the created environment lists no packages" >&2; exit 1; }
 echo "conda: environment has $(wc -l < /tmp/conda-list.txt) package(s)"
+
+# Where did the archives actually land? Printing the candidates beats guessing a
+# path and then reporting "no package archive was produced" for an environment
+# that demonstrably has packages installed.
+echo "conda: package-cache candidates:"
+for d in "${CONDA_PKGS_DIRS:-}" "$MAMBA_ROOT_PREFIX/pkgs" /tmp/mamba-root/pkgs          "$HOME/.mamba/pkgs" "$HOME/.conda/pkgs"; do
+  [ -n "$d" ] || continue
+  if [ -d "$d" ]; then
+    echo "  $d: $(ls -1 "$d" 2>/dev/null | wc -l) entries, $(ls -1 "$d" 2>/dev/null | grep -cE '\.(conda|tar\.bz2)$' || true) archive(s)"
+  else
+    echo "  $d: (absent)"
+  fi
+done
 
 # PACKAGE the environment with the tool's own packager, then verify the archive
 # carries the metadata a conda client reads.
