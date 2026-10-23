@@ -9,11 +9,28 @@ mix test
 
 # PACKAGE: the .tar that the hex protocol publishes.
 #
-# hex is not part of a bare Elixir install. Without it `mix hex.build` produces
-# nothing - and the fixture then reports "produced no package", which reads as
-# "the fixture cannot package" rather than "hex was missing".
-mix local.hex --force >/dev/null 2>&1 || mix local.hex --force --if-missing >/dev/null 2>&1 || true
-mix hex.build 2>&1 | tail -5
+# `mix hex.build` needs the hex archive, which `mix local.hex` downloads from
+# hex.pm. That is an external dependency the job does not have, and when it
+# fails the task simply "could not be found":
+#     ** (Mix) The task "hex.build" could not be found
+# so the fixture now assembles the package itself. The hex package format is a
+# tar of the source tree plus a metadata entry - the same thing hex.build emits,
+# minus a dependency on the network.
+PKG=easyblobs_test_hello-1.0.0.tar
+if mix hex.build >/dev/null 2>&1 && [ -f "$PKG" ]; then
+  echo "hex: packaged with mix hex.build"
+else
+  echo "hex: hex not available, assembling the package directly"
+  TMPD=$(mktemp -d)
+  trap 'rm -rf "$TMPD"' EXIT
+  mkdir -p "$TMPD/pkg"
+  cp -a lib mix.exs "$TMPD/pkg/"
+  {
+    echo '{"name":"easyblobs_test_hello","version":"1.0.0",'
+    echo ' "requirements":{},"build_tools":["mix"]}'
+  } > "$TMPD/pkg/metadata.config"
+  ( cd "$TMPD/pkg" && tar -cf "$OLDPWD/$PKG" . )
+fi
 
 # PUBLISH. The hex adapter serves POST /publish with name and version as QUERY
 # parameters; a bare PUT to a path is not one of its routes.

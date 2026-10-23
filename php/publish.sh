@@ -3,8 +3,26 @@
 set -eu
 : "${EASYBLOBS_BASE:?EASYBLOBS_BASE not set}"
 
-# BUILD: composer resolves and generates the autoloader, then the code runs.
-composer install --no-interaction --quiet 2>/dev/null || composer dump-autoload --quiet
+# BUILD: the code runs, and the autoloader is resolved when composer exists.
+#
+# easysetup ships php but NOT composer, so composer is the one thing this
+# fixture has to fetch itself. Without it the script died with
+# "composer: not found" and looked like a broken fixture rather than a missing
+# tool. A project with no dependencies does not need composer to run, so the
+# autoloader step is skipped when it is absent - the interesting part for THIS
+# fixture is publishing the manifest, which uses curl.
+if command -v composer >/dev/null 2>&1; then
+  composer install --no-interaction --quiet 2>/dev/null || composer dump-autoload --quiet
+else
+  echo "composer: not installed (easysetup has php, not composer); using a plain autoloader"
+  cat > autoload.php <<'PHP'
+<?php
+require __DIR__ . '/src/Greeter.php';
+PHP
+  # main.php requires vendor/autoload.php; give it one without composer.
+  mkdir -p vendor
+  cp autoload.php vendor/autoload.php
+fi
 php main.php
 
 # PUBLISH the manifest, which is what the composer adapter stores.

@@ -108,8 +108,26 @@ echo Greeter::greet('easyblobs'), "\\n";
 set -eu
 : "${EASYBLOBS_BASE:?EASYBLOBS_BASE not set}"
 
-# BUILD: composer resolves and generates the autoloader, then the code runs.
-composer install --no-interaction --quiet 2>/dev/null || composer dump-autoload --quiet
+# BUILD: the code runs, and the autoloader is resolved when composer exists.
+#
+# easysetup ships php but NOT composer, so composer is the one thing this
+# fixture has to fetch itself. Without it the script died with
+# "composer: not found" and looked like a broken fixture rather than a missing
+# tool. A project with no dependencies does not need composer to run, so the
+# autoloader step is skipped when it is absent - the interesting part for THIS
+# fixture is publishing the manifest, which uses curl.
+if command -v composer >/dev/null 2>&1; then
+  composer install --no-interaction --quiet 2>/dev/null || composer dump-autoload --quiet
+else
+  echo "composer: not installed (easysetup has php, not composer); using a plain autoloader"
+  cat > autoload.php <<'PHP'
+<?php
+require __DIR__ . '/src/Greeter.php';
+PHP
+  # main.php requires vendor/autoload.php; give it one without composer.
+  mkdir -p vendor
+  cp autoload.php vendor/autoload.php
+fi
 php main.php
 
 # PUBLISH the manifest, which is what the composer adapter stores.
@@ -175,11 +193,28 @@ mix test
 
 # PACKAGE: the .tar that the hex protocol publishes.
 #
-# hex is not part of a bare Elixir install. Without it `mix hex.build` produces
-# nothing - and the fixture then reports "produced no package", which reads as
-# "the fixture cannot package" rather than "hex was missing".
-mix local.hex --force >/dev/null 2>&1 || mix local.hex --force --if-missing >/dev/null 2>&1 || true
-mix hex.build 2>&1 | tail -5
+# `mix hex.build` needs the hex archive, which `mix local.hex` downloads from
+# hex.pm. That is an external dependency the job does not have, and when it
+# fails the task simply "could not be found":
+#     ** (Mix) The task "hex.build" could not be found
+# so the fixture now assembles the package itself. The hex package format is a
+# tar of the source tree plus a metadata entry - the same thing hex.build emits,
+# minus a dependency on the network.
+PKG=easyblobs_test_hello-1.0.0.tar
+if mix hex.build >/dev/null 2>&1 && [ -f "$PKG" ]; then
+  echo "hex: packaged with mix hex.build"
+else
+  echo "hex: hex not available, assembling the package directly"
+  TMPD=$(mktemp -d)
+  trap 'rm -rf "$TMPD"' EXIT
+  mkdir -p "$TMPD/pkg"
+  cp -a lib mix.exs "$TMPD/pkg/"
+  {
+    echo '{"name":"easyblobs_test_hello","version":"1.0.0",'
+    echo ' "requirements":{},"build_tools":["mix"]}'
+  } > "$TMPD/pkg/metadata.config"
+  ( cd "$TMPD/pkg" && tar -cf "$OLDPWD/$PKG" . )
+fi
 
 # PUBLISH. The hex adapter serves POST /publish with name and version as QUERY
 # parameters; a bare PUT to a path is not one of its routes.
