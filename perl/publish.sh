@@ -9,6 +9,12 @@ make >/dev/null
 make test 2>&1 | tail -5
 
 # PACKAGE: the .tar.gz a CPAN index points at.
+#
+# `make dist` needs a MANIFEST, and a checkout has none - it is generated from
+# the tree:
+#   Problem opening MANIFEST: No such file or directory at ExtUtils/Manifest.pm
+# `make manifest` writes it, which is what a CPAN author does before a release.
+make manifest >/dev/null 2>&1 || true
 make dist >/dev/null
 dist=$(ls ./*.tar.gz | head -1)
 [ -n "$dist" ] || { echo "cpan: make dist produced no tarball" >&2; exit 1; }
