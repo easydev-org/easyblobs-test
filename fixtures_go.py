@@ -114,15 +114,26 @@ out=$(bazel --bazelrc=.bazelrc.local info bazel-bin 2>/dev/null)/hello.txt
 [ -f "$out" ] || { echo "bazel: the target did not produce hello.txt" >&2; exit 1; }
 grep -q 'hello easyblobs' "$out" || { echo "bazel: wrong target output" >&2; exit 1; }
 
-# NO PUBLISH STEP.
+# PUBLISH the built artefact under _hosted/<repo>/.
 #
-# bazel has no adapter of its own: it is a read-only mirror of the Bazel Central
-# Registry, served through the generic target. A PUT to /modules/... is answered
-# 405 by design, so "publishing a bazel module" is not something this mirror
-# offers. What the fixture CAN prove - and does above - is that a real bazel
-# resolves a real module through the mirrored registry and builds a target.
-echo "bazel: resolved a module through the mirrored registry and built //:hello"
-echo "bazel: NOTE this mirror is read-only for bazel, so there is nothing to publish"
+# I wrote earlier that bazel "has no adapter of its own ... a PUT is 405 by
+# design". That was wrong: bazel is served by the generic `httpcache` adapter,
+# which is a read-only pull-through cache everywhere EXCEPT the reserved
+# "_hosted/<repo>/" prefix - and under that prefix it accepts PUT/GET/DELETE and
+# generates an index. A bare PUT to /modules/... is a write to a read-only cache,
+# which is where the 405 came from.
+#
+# The layout after the prefix is the BCR's own, so a bazel client can read it
+# back the way it reads bcr.bazel.build.
+code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \\
+  "$EASYBLOBS_BASE/_hosted/e2e/modules/easyblobs_hello/1.0.0/hello.txt" \\
+  --data-binary "@$out")
+case "$code" in 200|201) ;; *) echo "bazel: upload -> $code" >&2; exit 1 ;; esac
+curl -fsS -o /tmp/bazel-back \\
+  "$EASYBLOBS_BASE/_hosted/e2e/modules/easyblobs_hello/1.0.0/hello.txt"
+cmp -s /tmp/bazel-back "$out" || {
+  echo "bazel: the served file differs from the built one" >&2; exit 1; }
+echo "bazel: resolved through the mirror, built //:hello, published and re-read it"
 """,
         "Resolves a real module dependency through the mirrored BCR with `bazel mod "
         "graph`, then builds a target and checks its output.\n",

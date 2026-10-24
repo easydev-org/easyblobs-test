@@ -19,7 +19,11 @@ make dist >/dev/null
 dist=$(ls ./*.tar.gz | head -1)
 [ -n "$dist" ] || { echo "cpan: make dist produced no tarball" >&2; exit 1; }
 
-# PUBLISH it to the mount, then read it back.
+# PUBLISH under _hosted/<repo>/, which is what turns a write into an upload:
+# cpan shares the generic `httpcache` adapter, and every path outside the
+# reserved prefix is a read-only pull-through cache. The CPAN layout stays the
+# same after the prefix (authors/id/...), so a real cpan client reads it the way
+# it reads metacpan.
 base=$(basename "$dist")
 # --- build-only escape hatch -------------------------------------------------
 # A read-only mirror has no write path, so "publish" cannot be exercised. Set
@@ -32,9 +36,9 @@ if [ "${E2E_BUILD_ONLY:-0}" = 1 ]; then
 fi
 
 code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
-  "$EASYBLOBS_BASE/authors/id/E/EA/EASY${base}" --data-binary "@$dist")
+  "$EASYBLOBS_BASE/_hosted/e2e/authors/id/E/EA/EASY${base}" --data-binary "@$dist")
 case "$code" in 200|201) ;; *) echo "cpan: upload -> $code" >&2; exit 1 ;; esac
-curl -fsS -o "/tmp/cpan-back" "$EASYBLOBS_BASE/authors/id/E/EA/EASY${base}"
+curl -fsS -o "/tmp/cpan-back" "$EASYBLOBS_BASE/_hosted/e2e/authors/id/E/EA/EASY${base}"
 cmp -s /tmp/cpan-back "$dist" || {
   echo "cpan: the served tarball differs from the built one" >&2; exit 1; }
 echo "cpan: built, tested, published and re-read $base (bytes verified)"

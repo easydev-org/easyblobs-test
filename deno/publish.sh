@@ -15,6 +15,9 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 tar -czf "$TMP/hello-1.0.0.tar.gz" deno.json mod.ts
 pkg="$TMP/hello-1.0.0.tar.gz"
+# jsr is served by the generic `httpcache` adapter: read-only pull-through
+# everywhere except the reserved "_hosted/<repo>/" prefix, which is what makes a
+# request an upload. Without it a PUT to the cache path is answered 405.
 # --- build-only escape hatch -------------------------------------------------
 # A read-only mirror has no write path, so "publish" cannot be exercised. Set
 # E2E_BUILD_ONLY=1 to run everything up to the first publish call and stop: the
@@ -26,10 +29,11 @@ if [ "${E2E_BUILD_ONLY:-0}" = 1 ]; then
 fi
 
 code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
-  "$EASYBLOBS_BASE/@easyblobs-test/hello/1.0.0_meta.json" \
+  "$EASYBLOBS_BASE/_hosted/e2e/@easyblobs-test/hello/1.0.0_meta.json" \
   -H 'Content-Type: application/json' \
   --data-binary '{"exports":{"./mod.ts":"./mod.ts"},"moduleGraph1":{}}')
 case "$code" in 200|201) ;; *) echo "deno: publish -> $code" >&2; exit 1 ;; esac
-curl -fsS -o /dev/null "$EASYBLOBS_BASE/@easyblobs-test/hello/1.0.0_meta.json" || {
+curl -fsS -o /dev/null \
+  "$EASYBLOBS_BASE/_hosted/e2e/@easyblobs-test/hello/1.0.0_meta.json" || {
   echo "deno: the version metadata does not resolve after publish" >&2; exit 1; }
 echo "deno: type-checked, ran, published and re-read the version metadata"
