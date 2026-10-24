@@ -40,6 +40,16 @@ public final class Main {
 }
 """
 
+# gradle and sbt publish under their own GROUP so their artefacts do not collide
+# with maven's: all three go through the same maven adapter, and the mirror keys
+# an artefact by group/artifact/version.
+GREETER_GRADLE = GREETER.replace(
+    "package dev.easyblobs.test.hello;", "package dev.easyblobs.test.gradle;")
+MAIN_GRADLE = MAIN.replace(
+    "package dev.easyblobs.test.hello;", "package dev.easyblobs.test.gradle;")
+GREETER_SBT = GREETER.replace(
+    "package dev.easyblobs.test.hello;", "package dev.easyblobs.test.sbt;")
+
 
 def register(fixture):
     fixture(
@@ -84,7 +94,11 @@ echo "maven: built, ran and published hello-1.0.0.jar (bytes verified)"
     id 'java'
 }
 
-group = 'dev.easyblobs.test'
+# Distinct coordinates from the maven fixture: several protocols share the
+# maven ADAPTER, and two fixtures publishing dev.easyblobs.test:hello:1.0.0
+# would overwrite each other's jar in the mirror - the second would look like a
+# successful publish while silently replacing the first.
+group = 'dev.easyblobs.test.gradle'
 version = '1.0.0'
 
 java {
@@ -100,8 +114,8 @@ repositories {
 }
 """,
             "settings.gradle": "rootProject.name = 'hello'\n",
-            "src/main/java/dev/easyblobs/test/hello/Greeter.java": GREETER,
-            "src/main/java/dev/easyblobs/test/hello/Main.java": MAIN,
+            "src/main/java/dev/easyblobs/test/gradle/Greeter.java": GREETER_GRADLE,
+            "src/main/java/dev/easyblobs/test/gradle/Main.java": MAIN_GRADLE,
         },
         """#!/bin/sh
 # gradle: a real gradle build, using the mount as its maven repository.
@@ -113,11 +127,14 @@ gradle --no-daemon --quiet build
 jar=$(ls build/libs/*.jar | head -1)
 [ -s "$jar" ] || { echo "gradle: no jar produced" >&2; exit 1; }
 
-java -cp "$jar" dev.easyblobs.test.hello.Main
+# gradle, because the fixture is about gradle: running the JAR it produced is the
+# assertion that the build really worked.
+java -cp "$jar" dev.easyblobs.test.gradle.Main
 
 # PUBLISH the jar to the mount: a build that never reaches the registry does not
-# test the registry. The coordinate matches the gradle project (group/artifact).
-url="$EASYBLOBS_BASE/dev/easyblobs/test/hello/1.0.0/hello-1.0.0.jar"
+# test the registry. The coordinate matches THIS project's group, so it cannot
+# overwrite maven's dev.easyblobs.test:hello.
+url="$EASYBLOBS_BASE/dev/easyblobs/test/gradle/hello/1.0.0/hello-1.0.0.jar"
 code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "$url" --data-binary "@$jar")
 case "$code" in 200|201) ;; *) echo "gradle: PUT jar -> $code" >&2; exit 1 ;; esac
 
@@ -136,7 +153,9 @@ echo "gradle: built, ran and published hello-1.0.0.jar (bytes verified)"
         {
             "build.sbt": """scalaVersion := "2.13.14"
 name := "easyblobs-test-hello"
-organization := "dev.easyblobs.test"
+// Its own organisation: sbt, gradle and maven all publish through the same maven
+// adapter, so a shared coordinate would make each overwrite the previous one.
+organization := "dev.easyblobs.test.sbt"
 version := "1.0.0"
 """,
             "project/build.properties": "sbt.version=1.10.7\n",
@@ -167,12 +186,13 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 ( cd target && zip -qr "$TMP/hello-1.0.0.jar" . )
 jar="$TMP/hello-1.0.0.jar"
+# sbt's own organisation, so this jar cannot collide with maven's or gradle's.
 code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \\
-  "$EASYBLOBS_BASE/dev/easyblobs/test/hello/1.0.0/hello-1.0.0.jar" \\
+  "$EASYBLOBS_BASE/dev/easyblobs/test/sbt/hello/1.0.0/hello-1.0.0.jar" \\
   --data-binary "@$jar")
 case "$code" in 200|201) ;; *) echo "sbt: upload -> $code" >&2; exit 1 ;; esac
 curl -fsS -o /tmp/sbt-back.jar \\
-  "$EASYBLOBS_BASE/dev/easyblobs/test/hello/1.0.0/hello-1.0.0.jar"
+  "$EASYBLOBS_BASE/dev/easyblobs/test/sbt/hello/1.0.0/hello-1.0.0.jar"
 cmp -s /tmp/sbt-back.jar "$jar" || {
   echo "sbt: the served jar differs" >&2; exit 1; }
 echo "sbt: compiled, packaged, published and re-read the jar (bytes verified)"
