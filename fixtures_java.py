@@ -94,10 +94,10 @@ echo "maven: built, ran and published hello-1.0.0.jar (bytes verified)"
     id 'java'
 }
 
-# Distinct coordinates from the maven fixture: several protocols share the
-# maven ADAPTER, and two fixtures publishing dev.easyblobs.test:hello:1.0.0
-# would overwrite each other's jar in the mirror - the second would look like a
-# successful publish while silently replacing the first.
+// Distinct coordinates from the maven fixture: several protocols share the
+// maven ADAPTER, and two fixtures publishing dev.easyblobs.test:hello:1.0.0
+// would overwrite each other's jar in the mirror - the second would look like a
+// successful publish while silently replacing the first.
 group = 'dev.easyblobs.test.gradle'
 version = '1.0.0'
 
