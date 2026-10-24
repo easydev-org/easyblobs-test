@@ -44,6 +44,16 @@ echo "conda: environment has $(wc -l < /tmp/conda-list.txt) package(s)"
 # client rather than fabricating a zip.
 OUT=/tmp/conda-out
 mkdir -p "$OUT"
+# --- build-only escape hatch -------------------------------------------------
+# A read-only mirror has no write path, so "publish" cannot be exercised. Set
+# E2E_BUILD_ONLY=1 to run everything up to the first publish call and stop: the
+# build, the tests and the packaging still run, which is what those protocols
+# can be held to.
+if [ "${E2E_BUILD_ONLY:-0}" = 1 ]; then
+  echo "conda: build-only mode (E2E_BUILD_ONLY=1); stopping before publish"
+  exit 0
+fi
+
 "$MM" download -y -p "$OUT" -c conda-forge --override-channels "$MM" 2>&1 | tail -8 || true
 echo "conda: after download, $OUT has:"
 ls -1 "$OUT" 2>/dev/null | head -10

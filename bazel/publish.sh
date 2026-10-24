@@ -26,3 +26,12 @@ grep -q 'hello easyblobs' "$out" || { echo "bazel: wrong target output" >&2; exi
 # resolves a real module through the mirrored registry and builds a target.
 echo "bazel: resolved a module through the mirrored registry and built //:hello"
 echo "bazel: NOTE this mirror is read-only for bazel, so there is nothing to publish"
+# --- build-only escape hatch -------------------------------------------------
+# A read-only mirror has no write path, so "publish" cannot be exercised. Set
+# E2E_BUILD_ONLY=1 to run everything up to the first publish call and stop: the
+# build, the tests and the packaging still run, which is what those protocols
+# can be held to.
+if [ "${E2E_BUILD_ONLY:-0}" = 1 ]; then
+  echo "bazel: build-only mode (E2E_BUILD_ONLY=1); stopping before publish"
+  exit 0
+fi

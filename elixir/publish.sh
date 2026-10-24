@@ -43,6 +43,16 @@ fi
 # parameters; a bare PUT to a path is not one of its routes.
 pkg=$(ls easyblobs_test_hello-*.tar | head -1)
 [ -n "$pkg" ] || { echo "hex: mix hex.build produced no package (is hex installed?)" >&2; exit 1; }
+# --- build-only escape hatch -------------------------------------------------
+# A read-only mirror has no write path, so "publish" cannot be exercised. Set
+# E2E_BUILD_ONLY=1 to run everything up to the first publish call and stop: the
+# build, the tests and the packaging still run, which is what those protocols
+# can be held to.
+if [ "${E2E_BUILD_ONLY:-0}" = 1 ]; then
+  echo "elixir: build-only mode (E2E_BUILD_ONLY=1); stopping before publish"
+  exit 0
+fi
+
 code=$(curl -sS -o /tmp/hex-resp.json -w '%{http_code}' -X POST \
   "$EASYBLOBS_BASE/publish?name=easyblobs_test_hello&version=1.0.0" \
   -H 'Content-Type: application/octet-stream' --data-binary "@$pkg")

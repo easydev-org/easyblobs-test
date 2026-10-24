@@ -19,6 +19,16 @@ mkdir -p "$TMP/pkg"
 cp -a Package.swift Sources "$TMP/pkg/"
 ( cd "$TMP/pkg" && zip -qr "$TMP/$id-1.0.0.zip" . )
 zipf="$TMP/$id-1.0.0.zip"
+# --- build-only escape hatch -------------------------------------------------
+# A read-only mirror has no write path, so "publish" cannot be exercised. Set
+# E2E_BUILD_ONLY=1 to run everything up to the first publish call and stop: the
+# build, the tests and the packaging still run, which is what those protocols
+# can be held to.
+if [ "${E2E_BUILD_ONLY:-0}" = 1 ]; then
+  echo "swift: build-only mode (E2E_BUILD_ONLY=1); stopping before publish"
+  exit 0
+fi
+
 code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
   "$EASYBLOBS_BASE/$scope/$name/1.0.0" --data-binary "@$zipf")
 case "$code" in 200|201) ;; *) echo "swift: upload -> $code" >&2; exit 1 ;; esac

@@ -38,6 +38,16 @@ echo "node: registry=$registry"
 } > .npmrc
 echo "node: .npmrc (token redacted)"; sed 's/_authToken=.*/_authToken=***/' .npmrc
 export NPM_CONFIG_USERCONFIG="$PWD/.npmrc"
+# --- build-only escape hatch -------------------------------------------------
+# A read-only mirror has no write path, so "publish" cannot be exercised. Set
+# E2E_BUILD_ONLY=1 to run everything up to the first publish call and stop: the
+# build, the tests and the packaging still run, which is what those protocols
+# can be held to.
+if [ "${E2E_BUILD_ONLY:-0}" = 1 ]; then
+  echo "node: build-only mode (E2E_BUILD_ONLY=1); stopping before publish"
+  exit 0
+fi
+
 npm publish --registry "$registry" --userconfig "$PWD/.npmrc"
 
 # READ BACK: the packument must list this version.

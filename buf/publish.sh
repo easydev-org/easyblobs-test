@@ -40,6 +40,16 @@ json.dump({"owner": "easyblobs-test", "repository": "hello",
                         "content": base64.b64encode(mb).decode()},
            "blobs": blobs, "tags": ["v1.0.0"]}, open(sys.argv[1], "w"))
 PY
+# --- build-only escape hatch -------------------------------------------------
+# A read-only mirror has no write path, so "publish" cannot be exercised. Set
+# E2E_BUILD_ONLY=1 to run everything up to the first publish call and stop: the
+# build, the tests and the packaging still run, which is what those protocols
+# can be held to.
+if [ "${E2E_BUILD_ONLY:-0}" = 1 ]; then
+  echo "buf: build-only mode (E2E_BUILD_ONLY=1); stopping before publish"
+  exit 0
+fi
+
 code=$(curl -sS -o "$TMP/resp.json" -w '%{http_code}' -X POST \
   "$EASYBLOBS_BASE/buf.alpha.registry.v1alpha1.PushService/PushManifestAndBlobs" \
   -H 'Content-Type: application/json' --data-binary "@$TMP/push.json")

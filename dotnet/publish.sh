@@ -22,6 +22,16 @@ PY
 # PUBLISH through the SINGLE upload endpoint. nuget is not a path-style push:
 # the flat container (/v3/flatcontainer/...) is READ-only and a PUT there is 404;
 # publishing is `PUT /v3/package` with the nupkg as the body.
+# --- build-only escape hatch -------------------------------------------------
+# A read-only mirror has no write path, so "publish" cannot be exercised. Set
+# E2E_BUILD_ONLY=1 to run everything up to the first publish call and stop: the
+# build, the tests and the packaging still run, which is what those protocols
+# can be held to.
+if [ "${E2E_BUILD_ONLY:-0}" = 1 ]; then
+  echo "dotnet: build-only mode (E2E_BUILD_ONLY=1); stopping before publish"
+  exit 0
+fi
+
 code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
   "$EASYBLOBS_BASE/v3/package" -H 'Content-Type: application/octet-stream' \
   --data-binary "@$pkg")

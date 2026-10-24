@@ -15,6 +15,16 @@ trap 'rm -rf "$TMP"' EXIT
 ( cd target && zip -qr "$TMP/hello-1.0.0.jar" . )
 jar="$TMP/hello-1.0.0.jar"
 # sbt's own organisation, so this jar cannot collide with maven's or gradle's.
+# --- build-only escape hatch -------------------------------------------------
+# A read-only mirror has no write path, so "publish" cannot be exercised. Set
+# E2E_BUILD_ONLY=1 to run everything up to the first publish call and stop: the
+# build, the tests and the packaging still run, which is what those protocols
+# can be held to.
+if [ "${E2E_BUILD_ONLY:-0}" = 1 ]; then
+  echo "sbt: build-only mode (E2E_BUILD_ONLY=1); stopping before publish"
+  exit 0
+fi
+
 code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
   "$EASYBLOBS_BASE/dev/easyblobs/test/sbt/hello/1.0.0/hello-1.0.0.jar" \
   --data-binary "@$jar")

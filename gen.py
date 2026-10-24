@@ -44,6 +44,61 @@ def write(path, content, mode=None):
 EXEC = stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH
 
 
+# Some protocols are read-only MIRRORS: the adapter serves an upstream registry
+# and has no write path, so there is nothing to publish through it. Their
+# fixtures are still real buildable projects, and building one is worth doing -
+# it proves the toolchain works on real source and that the client can resolve
+# against the mount. So every publish.sh gets the same escape hatch:
+#
+#     E2E_BUILD_ONLY=1 sh ./publish.sh
+#
+# runs everything up to the first publish call and stops. Injected here, once,
+# rather than written into 21 scripts by hand.
+BUILD_ONLY_GUARD = """\
+
+# --- build-only escape hatch -------------------------------------------------
+# A read-only mirror has no write path, so "publish" cannot be exercised. Set
+# E2E_BUILD_ONLY=1 to run everything up to the first publish call and stop: the
+# build, the tests and the packaging still run, which is what those protocols
+# can be held to.
+if [ "${E2E_BUILD_ONLY:-0}" = 1 ]; then
+  echo "%s: build-only mode (E2E_BUILD_ONLY=1); stopping before publish"
+  exit 0
+fi
+"""
+
+
+def add_build_only_guard(name, script):
+    """Insert the guard immediately before the first publish action.
+
+    The fixtures all follow the same shape - build, then publish - so the first
+    publish call is the boundary. Recognising the call sites explicitly (rather
+    than guessing at a line number) keeps this honest: if a script stops
+    publishing the way this expects, the guard simply lands at the end, which is
+    still correct.
+    """
+    markers = (
+        "\ncode=$(curl",       # the common path-style publish
+        "\ncargo publish",
+        "\nnpm publish",
+        "\ngem push",
+        "\ntwine upload",
+        "\n$PY -m twine upload",
+        "\npyexec -m twine upload",
+        "\n\"$MM\" download",
+    )
+    best = -1
+    for m in markers:
+        i = script.find(m)
+        if i >= 0 and (best < 0 or i < best):
+            best = i
+    if best < 0:
+        # No publish step at all (bazel already says so explicitly) - put the
+        # guard at the end, where it is a no-op that still prints the mode.
+        return script.rstrip("\n") + BUILD_ONLY_GUARD % name + ""
+    return script[:best] + BUILD_ONLY_GUARD % name + script[best:]
+
+
 def fixture(name, files, publish, readme):
     FIXTURES[name] = {"files": files, "publish": publish, "readme": readme}
 
@@ -63,7 +118,8 @@ def main():
     for name, spec in FIXTURES.items():
         for path, content in spec["files"].items():
             write(os.path.join(name, path), content)
-        write(os.path.join(name, "publish.sh"), spec["publish"], EXEC)
+        write(os.path.join(name, "publish.sh"),
+              add_build_only_guard(name, spec["publish"]), EXEC)
         write(os.path.join(name, "README.md"), spec["readme"])
 
     listing = "\n".join(f"- `{n}`" for n in sorted(FIXTURES))

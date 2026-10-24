@@ -19,6 +19,16 @@ mkdir -p "$TMP/zip/$MOD@$VER"
 cp go.mod hello.go "$TMP/zip/$MOD@$VER/"
 ( cd "$TMP/zip" && zip -qr "$TMP/mod.zip" . )
 
+# --- build-only escape hatch -------------------------------------------------
+# A read-only mirror has no write path, so "publish" cannot be exercised. Set
+# E2E_BUILD_ONLY=1 to run everything up to the first publish call and stop: the
+# build, the tests and the packaging still run, which is what those protocols
+# can be held to.
+if [ "${E2E_BUILD_ONLY:-0}" = 1 ]; then
+  echo "go: build-only mode (E2E_BUILD_ONLY=1); stopping before publish"
+  exit 0
+fi
+
 code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
   "$EASYBLOBS_BASE/upload?name=$MOD&version=$VER" \
   -H 'Content-Type: application/octet-stream' --data-binary "@$TMP/mod.zip")
