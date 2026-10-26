@@ -3,7 +3,8 @@
 set -eu
 : "${EASYBLOBS_BASE:?EASYBLOBS_BASE not set}"
 
-# The mount has to BE a configured source before --source can name it.
+# ruby 4's `gem push` accepts neither --host nor --source; it pushes to the
+# FIRST configured source. So the mount must be that source, and nothing else.
 gem sources --clear-all >/dev/null 2>&1 || true
 gem sources --add "$EASYBLOBS_BASE" >/dev/null
 mkdir -p "$HOME/.gem"
@@ -15,9 +16,8 @@ gem build easyblobs_test_hello.gemspec >/dev/null
 gemfile=$(ls easyblobs_test_hello-*.gem | head -1)
 ruby test_gem.rb
 
-# PUBLISH whatever gem produced.
-# --source, not --host: `gem push` dropped --host and now raises ArgumentError.
-# --source names the source it was added as, which is what the e2e suite uses.
+# PUBLISH whatever gem produced. No --host and no --source: ruby 4's gem push
+# rejects both and pushes to the first configured source, which is the mount.
 # --- build-only escape hatch -------------------------------------------------
 # A read-only mirror has no write path, so "publish" cannot be exercised. Set
 # E2E_BUILD_ONLY=1 to run everything up to the first publish call and stop: the
@@ -28,7 +28,7 @@ if [ "${E2E_BUILD_ONLY:-0}" = 1 ]; then
   exit 0
 fi
 
-gem push --source "$EASYBLOBS_BASE" "$gemfile" || {
+gem push "$gemfile" || {
   echo "rubygems: gem push failed" >&2; exit 1; }
 
 # READ BACK: the versions API must list the release.
