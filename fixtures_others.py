@@ -44,13 +44,22 @@ puts EasyblobsTestHello.greet('easyblobs')
 set -eu
 : "${EASYBLOBS_BASE:?EASYBLOBS_BASE not set}"
 
+# The mount has to BE a configured source before --source can name it.
+gem sources --clear-all >/dev/null 2>&1 || true
+gem sources --add "$EASYBLOBS_BASE" >/dev/null
+mkdir -p "$HOME/.gem"
+printf -- '---\\n:rubygems_api_key: e2e\\n' > "$HOME/.gem/credentials"
+chmod 600 "$HOME/.gem/credentials"
+
 # BUILD: gem build validates the gemspec and produces a real .gem.
 gem build easyblobs_test_hello.gemspec >/dev/null
 gemfile=$(ls easyblobs_test_hello-*.gem | head -1)
 ruby test_gem.rb
 
 # PUBLISH whatever gem produced.
-gem push --host "$EASYBLOBS_BASE" "$gemfile" || {
+# --source, not --host: `gem push` dropped --host and now raises ArgumentError.
+# --source names the source it was added as, which is what the e2e suite uses.
+gem push --source "$EASYBLOBS_BASE" "$gemfile" || {
   echo "rubygems: gem push failed" >&2; exit 1; }
 
 # READ BACK: the versions API must list the release.
